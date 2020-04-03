@@ -1,0 +1,31 @@
+image: Visual Studio 2019
+
+skip_non_tags: true
+
+environment:
+  FRIENDLY_NAME: Base Console
+
+build_script:
+  ps: |-
+      set ExternalCompilerOptions=/DAPP_VERSION=$env:APPVEYOR_REPO_TAG_NAME
+      msbuild ($env:APPVEYOR_PROJECT_NAME).sln /m /p:Configuration=Release /p:Platform=x86 /logger:"C:\Program Files\AppVeyor\BuildAgent\Appveyor.MSBuildLogger.dll"
+
+after_build:
+  ps: |-
+      # Make sure you use quotes around variables below!
+      7z a "$env:APPVEYOR_PROJECT_NAME.zip" ".\x86\Release\*.exe" LICENSE.txt
+      Get-FileHash "$env:APPVEYOR_PROJECT_NAME.zip" -Algorithm SHA256 | Format-List
+
+artifacts:
+  - path: $(APPVEYOR_PROJECT_NAME).zip
+    name: $(FRIENDLY_NAME)
+
+deploy:
+  release: $(APPVEYOR_REPO_TAG_NAME)
+  description: $(FRIENDLY_NAME) $(APPVEYOR_REPO_TAG_NAME)
+  provider: GitHub
+  auth_token:
+    secure: w5YuQOim+G+U7FxxrL0BH6t0trCWKCs9DMZlF4xqF2XGC6SymzwaJrPWrKeeJHPK
+  artifact: /.*\.zip/
+  draft: false
+  prerelease: false

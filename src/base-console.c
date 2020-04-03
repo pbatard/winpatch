@@ -1,5 +1,5 @@
 /*
- * base_console - Because sometimes I want to release a win32 console
+ * base-console - Because sometimes I want to release a win32 console
  * utility in a hurry, and I like to have it set up properly.
  *
  * Copyright © 2020 Pete Batard <pete@akeo.ie>

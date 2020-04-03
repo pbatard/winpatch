@@ -11,7 +11,7 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\src\base_console.c">
+    <ClCompile Include="..\src\base-console.c">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
