@@ -1,0 +1,7 @@
+*.sh            eol=lf
+configure       eol=lf
+*.sln           eol=crlf
+*.vcxproj*      eol=crlf
+*.cmd           eol=crlf
+.gitattributes  export-ignore
+.gitignore      export-ignore
