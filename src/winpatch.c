@@ -29,6 +29,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <accctrl.h>
+#include <aclapi.h>
 
 #include "msapi_utf8.h"
 
@@ -126,11 +128,11 @@ BOOL IsCurrentProcessElevated(void)
 
 	if (ReadRegistryKey32(HKEY_LOCAL_MACHINE, "Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\System\\EnableLUA") == 1) {
 		if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
-			fprintf(stderr, "Could not get current process token\n");
+			fprintf(stderr, "Could not get current process token: %u\n", GetLastError());
 			goto out;
 		}
 		if (!GetTokenInformation(token, TokenElevation, &te, sizeof(te), &size)) {
-			fprintf(stderr, "Could not get token information\n");
+			fprintf(stderr, "Could not get token information: %u\n", GetLastError());
 			goto out;
 		}
 		r = (te.TokenIsElevated != 0);
@@ -148,18 +150,213 @@ out:
 	return r;
 }
 
+/*
+ * https://docs.microsoft.com/en-us/windows/win32/secauthz/enabling-and-disabling-privileges-in-c--
+ */
+BOOL SetPrivilege(
+	HANDLE hToken,              // access token handle
+	const char* lpszPrivilege,  // name of privilege to enable/disable
+	BOOL bEnablePrivilege       // to enable or disable privilege
+)
+{
+	TOKEN_PRIVILEGES tp;
+	LUID luid;
+
+	if (!LookupPrivilegeValueA(
+		NULL,            // lookup privilege on local system
+		lpszPrivilege,   // privilege to lookup 
+		&luid))        // receives LUID of privilege
+	{
+		fprintf(stderr, "LookupPrivilegeValue error: %u\n", GetLastError());
+		return FALSE;
+	}
+
+	tp.PrivilegeCount = 1;
+	tp.Privileges[0].Luid = luid;
+	if (bEnablePrivilege)
+		tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+	else
+		tp.Privileges[0].Attributes = 0;
+
+	// Enable the privilege or disable all privileges.
+	if (!AdjustTokenPrivileges(
+		hToken,
+		FALSE,
+		&tp,
+		sizeof(TOKEN_PRIVILEGES),
+		(PTOKEN_PRIVILEGES)NULL,
+		(PDWORD)NULL)) {
+		fprintf(stderr, "AdjustTokenPrivileges error: %u\n", GetLastError());
+		return FALSE;
+	}
+
+	if (GetLastError() == ERROR_NOT_ALL_ASSIGNED) {
+		fprintf(stderr, "The token does not have the specified privilege.\n");
+		return FALSE;
+	}
+
+	return TRUE;
+}
+
+/*
+ * https://docs.microsoft.com/en-us/windows/win32/secauthz/taking-object-ownership-in-c--
+ */
+#define NUM_ACES 2
+BOOL TakeOwnership(const wchar_t* lpszOwnFile)
+{
+	BOOL bRetval = FALSE;
+	HANDLE hToken = NULL;
+	PSID pSIDAdmin = NULL;
+	PSID pSIDEveryone = NULL;
+	PACL pACL = NULL;
+	SID_IDENTIFIER_AUTHORITY SIDAuthWorld = SECURITY_WORLD_SID_AUTHORITY;
+	SID_IDENTIFIER_AUTHORITY SIDAuthNT = SECURITY_NT_AUTHORITY;
+	EXPLICIT_ACCESS ea[NUM_ACES];
+	DWORD dwRes;
+
+	// Specify the DACL to use.
+	// Create a SID for the Everyone group.
+	if (!AllocateAndInitializeSid(&SIDAuthWorld, 1,
+		SECURITY_WORLD_RID,
+		0,
+		0, 0, 0, 0, 0, 0,
+		&pSIDEveryone)) {
+		fprintf(stderr, "AllocateAndInitializeSid (Everyone) error %u\n", GetLastError());
+		goto Cleanup;
+	}
+
+	// Create a SID for the BUILTIN\Administrators group.
+	if (!AllocateAndInitializeSid(&SIDAuthNT, 2,
+		SECURITY_BUILTIN_DOMAIN_RID,
+		DOMAIN_ALIAS_RID_ADMINS,
+		0, 0, 0, 0, 0, 0,
+		&pSIDAdmin)) {
+		fprintf(stderr, "AllocateAndInitializeSid (Admin) error %u\n", GetLastError());
+		goto Cleanup;
+	}
+
+	ZeroMemory(&ea, NUM_ACES * sizeof(EXPLICIT_ACCESS));
+
+	// Set read access for Everyone.
+	ea[0].grfAccessPermissions = GENERIC_READ;
+	ea[0].grfAccessMode = SET_ACCESS;
+	ea[0].grfInheritance = NO_INHERITANCE;
+	ea[0].Trustee.TrusteeForm = TRUSTEE_IS_SID;
+	ea[0].Trustee.TrusteeType = TRUSTEE_IS_WELL_KNOWN_GROUP;
+	ea[0].Trustee.ptstrName = (LPTSTR)pSIDEveryone;
+
+	// Set full control for Administrators.
+	ea[1].grfAccessPermissions = GENERIC_ALL;
+	ea[1].grfAccessMode = SET_ACCESS;
+	ea[1].grfInheritance = NO_INHERITANCE;
+	ea[1].Trustee.TrusteeForm = TRUSTEE_IS_SID;
+	ea[1].Trustee.TrusteeType = TRUSTEE_IS_GROUP;
+	ea[1].Trustee.ptstrName = (LPTSTR)pSIDAdmin;
+
+	if (ERROR_SUCCESS != SetEntriesInAcl(NUM_ACES, ea, NULL, &pACL)) {
+		fprintf(stderr, "Failed SetEntriesInAcl\n");
+		goto Cleanup;
+	}
+
+	// Try to modify the object's DACL.
+	dwRes = SetNamedSecurityInfoW(
+		(LPWSTR)lpszOwnFile,         // name of the object
+		SE_FILE_OBJECT,              // type of object
+		DACL_SECURITY_INFORMATION,   // change only the object's DACL
+		NULL, NULL,                  // do not change owner or group
+		pACL,                        // DACL specified
+		NULL);                       // do not change SACL
+
+	if (ERROR_SUCCESS == dwRes) {
+		bRetval = TRUE;
+		// No more processing needed.
+		goto Cleanup;
+	}
+	if (dwRes != ERROR_ACCESS_DENIED) {
+		printf("First SetNamedSecurityInfo call failed: %u\n", dwRes);
+		goto Cleanup;
+	}
+
+	// If the preceding call failed because access was denied, 
+	// enable the SE_TAKE_OWNERSHIP_NAME privilege, create a SID for 
+	// the Administrators group, take ownership of the object, and 
+	// disable the privilege. Then try again to set the object's DACL.
+
+	// Open a handle to the access token for the calling process.
+	if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES, &hToken)) {
+		fprintf(stderr, "OpenProcessToken failed: %u\n", GetLastError());
+		goto Cleanup;
+	}
+
+	// Enable the SE_TAKE_OWNERSHIP_NAME privilege.
+	if (!SetPrivilege(hToken, "SeTakeOwnershipPrivilege", TRUE)) {
+		fprintf(stderr, "You must be logged on as Administrator.\n");
+		goto Cleanup;
+	}
+
+	// Set the owner in the object's security descriptor.
+	dwRes = SetNamedSecurityInfoW(
+		(LPWSTR)lpszOwnFile,         // name of the object
+		SE_FILE_OBJECT,              // type of object
+		OWNER_SECURITY_INFORMATION,  // change only the object's owner
+		pSIDAdmin,                   // SID of Administrator group
+		NULL,
+		NULL,
+		NULL);
+
+	if (dwRes != ERROR_SUCCESS) {
+		fprintf(stderr, "Could not set owner. Error: %u\n", dwRes);
+		goto Cleanup;
+	}
+
+	// Disable the SE_TAKE_OWNERSHIP_NAME privilege.
+	if (!SetPrivilege(hToken, "SeTakeOwnershipPrivilege", FALSE)) {
+		fprintf(stderr, "Failed SetPrivilege call unexpectedly.\n");
+		goto Cleanup;
+	}
+
+	// Try again to modify the object's DACL, now that we are the owner.
+	dwRes = SetNamedSecurityInfoW(
+		(LPWSTR)lpszOwnFile,         // name of the object
+		SE_FILE_OBJECT,              // type of object
+		DACL_SECURITY_INFORMATION,   // change only the object's DACL
+		NULL, NULL,                  // do not change owner or group
+		pACL,                        // DACL specified
+		NULL);                       // do not change SACL
+
+	if (dwRes == ERROR_SUCCESS)
+		bRetval = TRUE;
+	else
+		fprintf(stderr, "Second SetNamedSecurityInfo call failed: %u\n", dwRes);
+
+Cleanup:
+	if (pSIDAdmin)
+		FreeSid(pSIDAdmin);
+	if (pSIDEveryone)
+		FreeSid(pSIDEveryone);
+	if (pACL)
+		LocalFree(pACL);
+	if (hToken)
+		CloseHandle(hToken);
+	return bRetval;
+}
+
 int main_utf8(int argc, char** argv)
 {
+	const wchar_t* filename = L"F:\\Windows\\System32\\drivers\\1394ohci.sys";
+
 	if (!IsCurrentProcessElevated()) {
 		fprintf(stderr, "This command must be run from an elevated prompt.\n");
 		return 1;
 	}
 
-
 	fprintf(stderr, "%s %s © 2020 Pete Batard <pete@akeo.ie>\n\n",
 		appname(argv[0]), APP_VERSION_STR);
 
-	fprintf(stdout, "Hello world!\n");
+	if (!TakeOwnership(filename)) {
+		fprintf(stderr, "Could not take ownership of %S\n", filename);
+		return 2;
+	}
 
 	return 0;
 }
