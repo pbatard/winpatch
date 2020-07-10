@@ -3,7 +3,7 @@ image: Visual Studio 2019
 skip_non_tags: true
 
 environment:
-  FRIENDLY_NAME: Base Console
+  FRIENDLY_NAME: Windows Patcher
 
 build_script:
   ps: |-

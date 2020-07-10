@@ -233,7 +233,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="..\src\base-console.c" />
+    <ClCompile Include="..\src\winpatch.c" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\src\msapi_utf8.h" />

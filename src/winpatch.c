@@ -1,6 +1,5 @@
 /*
- * base-console - Because sometimes I want to release a win32 console
- * utility in a hurry, and I like to have it set up properly.
+ * winpatch - Windows system file patcher
  *
  * Copyright © 2020 Pete Batard <pete@akeo.ie>
  *
