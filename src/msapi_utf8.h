@@ -29,6 +29,7 @@
 #include <setupapi.h>
 #include <direct.h>
 #include <share.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <io.h>
 #include <sys/types.h>
@@ -1042,6 +1043,26 @@ static __inline int _stat64U(const char *path, struct __stat64 *buffer)
 	return ret;
 }
 
+static __inline int _accessU(const char* path, int mode)
+{
+	int ret;
+	wconvert(path);
+	ret = _waccess(wpath, mode);
+	wfree(path);
+	return ret;
+}
+
+static __inline const char* _filenameU(const char* path)
+{
+	int i;
+	if (path == NULL)
+		return NULL;
+	for (i = (int)strlen(path) - 1; i >= 0; i--)
+		if ((path[i] == '/') || (path[i] == '\\'))
+			return &path[i + 1];
+	return path;
+}
+
 // returned UTF-8 string must be freed
 static __inline char* getenvU(const char* varname)
 {
@@ -1068,6 +1089,43 @@ static __inline int _mkdirU(const char* dirname)
 	wconvert(dirname);
 	int ret;
 	ret = _wmkdir(wdirname);
+	wfree(dirname);
+	return ret;
+}
+
+// This version of _mkdirU creates all needed directories along the way
+static __inline int _mkdirExU(const char* dirname)
+{
+	int ret = -1, trailing_slash = -1;
+	size_t i, len;
+	wconvert(dirname);
+	len = wcslen(wdirname);
+	while (trailing_slash && (len > 0)) {
+		if ((wdirname[len - 1] == '\\') || (wdirname[len - 1] == '/'))
+			wdirname[--len] = 0;
+		else
+			trailing_slash = 0;
+	}
+	for (i = 0; i < len; i++)
+		if ((wdirname[i] == '\\') || (wdirname[i] == '/'))
+			wdirname[i] = 0;
+	for (i = 0; i < len; ) {
+		if ((_wmkdir(wdirname) < 0) && (errno != EEXIST) && (errno != EACCES))
+			goto out;
+		i = wcslen(wdirname);
+		wdirname[i] = '\\';
+	}
+	ret = 0;
+out:
+	wfree(dirname);
+	return ret;
+}
+
+static __inline int _rmdirU(const char* dirname)
+{
+	wconvert(dirname);
+	int ret;
+	ret = _wrmdir(wdirname);
 	wfree(dirname);
 	return ret;
 }
