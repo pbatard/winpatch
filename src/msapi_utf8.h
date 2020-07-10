@@ -1130,6 +1130,15 @@ static __inline int _rmdirU(const char* dirname)
 	return ret;
 }
 
+static __inline BOOL MoveFileU(const char* lpExistingFileName, const char* lpNewFileName)
+{
+	wconvert(lpExistingFileName);
+	wconvert(lpNewFileName);
+	BOOL ret = MoveFileW(wlpExistingFileName, wlpNewFileName);
+	wfree(lpNewFileName);
+	wfree(lpExistingFileName);
+}
+
 // The following expects PropertyBuffer to contain a single Unicode string
 static __inline BOOL SetupDiGetDeviceRegistryPropertyU(HDEVINFO DeviceInfoSet, PSP_DEVINFO_DATA DeviceInfoData,
 	DWORD Property, PDWORD PropertyRegDataType, PBYTE PropertyBuffer, DWORD PropertyBufferSize, PDWORD RequiredSize)

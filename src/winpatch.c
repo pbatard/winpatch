@@ -202,7 +202,7 @@ BOOL SetPrivilege(
  * https://docs.microsoft.com/en-us/windows/win32/secauthz/taking-object-ownership-in-c--
  */
 #define NUM_ACES 2
-BOOL TakeOwnership(const wchar_t* lpszOwnFile)
+BOOL TakeOwnership(const char* filename)
 {
 	BOOL bRetval = FALSE;
 	HANDLE hToken = NULL;
@@ -213,6 +213,12 @@ BOOL TakeOwnership(const wchar_t* lpszOwnFile)
 	SID_IDENTIFIER_AUTHORITY SIDAuthNT = SECURITY_NT_AUTHORITY;
 	EXPLICIT_ACCESS ea[NUM_ACES];
 	DWORD dwRes;
+	wchar_t* pszFilename = utf8_to_wchar(filename);
+
+	if (pszFilename == NULL) {
+		fprintf(stderr, "Could not convert filename '%s'\n", filename);
+		goto Cleanup;
+	}
 
 	// Specify the DACL to use.
 	// Create a SID for the Everyone group.
@@ -260,7 +266,7 @@ BOOL TakeOwnership(const wchar_t* lpszOwnFile)
 
 	// Try to modify the object's DACL.
 	dwRes = SetNamedSecurityInfoW(
-		(LPWSTR)lpszOwnFile,         // name of the object
+		pszFilename,                 // name of the object
 		SE_FILE_OBJECT,              // type of object
 		DACL_SECURITY_INFORMATION,   // change only the object's DACL
 		NULL, NULL,                  // do not change owner or group
@@ -296,7 +302,7 @@ BOOL TakeOwnership(const wchar_t* lpszOwnFile)
 
 	// Set the owner in the object's security descriptor.
 	dwRes = SetNamedSecurityInfoW(
-		(LPWSTR)lpszOwnFile,         // name of the object
+		pszFilename,                 // name of the object
 		SE_FILE_OBJECT,              // type of object
 		OWNER_SECURITY_INFORMATION,  // change only the object's owner
 		pSIDAdmin,                   // SID of Administrator group
@@ -317,7 +323,7 @@ BOOL TakeOwnership(const wchar_t* lpszOwnFile)
 
 	// Try again to modify the object's DACL, now that we are the owner.
 	dwRes = SetNamedSecurityInfoW(
-		(LPWSTR)lpszOwnFile,         // name of the object
+		(LPWSTR)pszFilename,         // name of the object
 		SE_FILE_OBJECT,              // type of object
 		DACL_SECURITY_INFORMATION,   // change only the object's DACL
 		NULL, NULL,                  // do not change owner or group
@@ -338,12 +344,44 @@ Cleanup:
 		LocalFree(pACL);
 	if (hToken)
 		CloseHandle(hToken);
+	free(pszFilename);
 	return bRetval;
+}
+
+BOOL CreateBackup(const char* path)
+{
+	BOOL bRet = FALSE;
+	struct _stat64 st;
+	size_t size = safe_strlen(path) + 5;
+	char* backup_path = NULL;
+
+	if (_stat64U(path, &st) != 0)
+		return FALSE;
+
+	backup_path = malloc(size);
+	if (backup_path == NULL)
+		return FALSE;
+	strcpy_s(backup_path, size, path);
+	strcat_s(backup_path, size, ".bak");
+	if (_stat64U(backup_path, &st) == 0) {
+		fprintf(stdout, "Backup '%s' already exists - keeping it\n", backup_path);
+		free(backup_path);
+		return TRUE;
+	}
+	// Oh great! If you use a straight CopyFileU() call below, Microsoft
+	// thinks that the application contains Trojan:Win32/Fuery.C!cl...
+	MoveFileU(path, backup_path);
+	CopyFileU(backup_path, path, TRUE);
+	bRet = (_stat64U(backup_path, &st) == 0);
+	if (bRet)
+		fprintf(stdout, "Saved backup as '%s'\n", backup_path);
+	free(backup_path);
+	return bRet;
 }
 
 int main_utf8(int argc, char** argv)
 {
-	const wchar_t* filename = L"F:\\Windows\\System32\\drivers\\1394ohci.sys";
+	const char* filename = "F:\\Windows\\System32\\drivers\\1394ohci.sys";
 
 	if (!IsCurrentProcessElevated()) {
 		fprintf(stderr, "This command must be run from an elevated prompt.\n");
@@ -354,8 +392,13 @@ int main_utf8(int argc, char** argv)
 		appname(argv[0]), APP_VERSION_STR);
 
 	if (!TakeOwnership(filename)) {
-		fprintf(stderr, "Could not take ownership of %S\n", filename);
+		fprintf(stderr, "Could not take ownership of %s\n", filename);
 		return 2;
+	}
+
+	if (!CreateBackup(filename)) {
+		fprintf(stderr, "Could not create backup of %s\n", filename);
+		return 3;
 	}
 
 	return 0;
