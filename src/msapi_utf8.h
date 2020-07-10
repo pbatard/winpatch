@@ -1137,6 +1137,7 @@ static __inline BOOL MoveFileU(const char* lpExistingFileName, const char* lpNew
 	BOOL ret = MoveFileW(wlpExistingFileName, wlpNewFileName);
 	wfree(lpNewFileName);
 	wfree(lpExistingFileName);
+	return ret;
 }
 
 // The following expects PropertyBuffer to contain a single Unicode string
@@ -1190,6 +1191,15 @@ static __inline BOOL GetVolumeInformationU(LPCSTR lpRootPathName, LPSTR lpVolume
 	wfree(lpFileSystemNameBuffer);
 	wfree(lpRootPathName);
 	SetLastError(err);
+	return ret;
+}
+
+static __inline DWORD MapFileAndCheckSumU(const char* Filename, PDWORD HeaderSum, PDWORD CheckSum)
+{
+	DWORD ret;
+	wconvert(Filename);
+	ret = MapFileAndCheckSumW(wFilename, HeaderSum, CheckSum);
+	wfree(Filename);
 	return ret;
 }
 
