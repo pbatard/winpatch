@@ -28,6 +28,8 @@ Use Visual Studio 2019 and invoke the `.sln` to compile.
 Example
 -------
 
+![Screenshot](https://raw.githubusercontent.com/pbatard/winpatch/master/pics/Screenshot.png)
+
 Let's say you want to run Windows 10 ARM64 on a system where xHCI registers must be accessed through two
 32-bit accesses (such as the VL805 controller of the Raspberry Pi 4), but the Windows `USBXHCI.SYS` driver
 is enforcing 64-bit accesses, which results in a BSOD when trying to boot from an USB 3.0 drive.
