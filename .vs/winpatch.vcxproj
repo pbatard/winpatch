@@ -234,9 +234,11 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="..\src\winpatch.c" />
+    <ClCompile Include="..\src\winpki.c" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\src\msapi_utf8.h" />
+    <ClInclude Include="..\src\mssign32.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

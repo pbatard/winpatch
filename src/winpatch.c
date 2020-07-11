@@ -39,40 +39,25 @@
 
 #define _STRINGIFY(x) #x
 #define STRINGIFY(x) _STRINGIFY(x)
-#define NUM_ACES 2
 
 #define safe_free(p) do {free((void*)p); p = NULL;} while(0)
-#define safe_mm_free(p) do {_mm_free((void*)p); p = NULL;} while(0)
 #define safe_min(a, b) min((size_t)(a), (size_t)(b))
 #define safe_strcp(dst, dst_max, src, count) do {memcpy(dst, src, safe_min(count, dst_max)); \
 	((char*)dst)[safe_min(count, dst_max)-1] = 0;} while(0)
 #define safe_strcpy(dst, dst_max, src) safe_strcp(dst, dst_max, src, safe_strlen(src)+1)
 #define static_strcpy(dst, src) safe_strcpy(dst, sizeof(dst), src)
-#define safe_strncat(dst, dst_max, src, count) strncat(dst, src, safe_min(count, dst_max - safe_strlen(dst) - 1))
 #define safe_strcat(dst, dst_max, src) safe_strncat(dst, dst_max, src, safe_strlen(src)+1)
 #define static_strcat(dst, src) safe_strcat(dst, sizeof(dst), src)
-#define safe_strcmp(str1, str2) strcmp(((str1==NULL)?"<NULL>":str1), ((str2==NULL)?"<NULL>":str2))
-#define safe_strstr(str1, str2) strstr(((str1==NULL)?"<NULL>":str1), ((str2==NULL)?"<NULL>":str2))
-#define safe_stricmp(str1, str2) _stricmp(((str1==NULL)?"<NULL>":str1), ((str2==NULL)?"<NULL>":str2))
-#define safe_strncmp(str1, str2, count) strncmp(((str1==NULL)?"<NULL>":str1), ((str2==NULL)?"<NULL>":str2), count)
-#define safe_strnicmp(str1, str2, count) _strnicmp(((str1==NULL)?"<NULL>":str1), ((str2==NULL)?"<NULL>":str2), count)
 #define safe_closehandle(h) do {if ((h != INVALID_HANDLE_VALUE) && (h != NULL)) {CloseHandle(h); h = INVALID_HANDLE_VALUE;}} while(0)
-#define safe_release_dc(hDlg, hDC) do {if ((hDC != INVALID_HANDLE_VALUE) && (hDC != NULL)) {ReleaseDC(hDlg, hDC); hDC = NULL;}} while(0)
-#define safe_sprintf(dst, count, ...) do {_snprintf(dst, count, __VA_ARGS__); (dst)[(count)-1] = 0; } while(0)
-#define static_sprintf(dst, ...) safe_sprintf(dst, sizeof(dst), __VA_ARGS__)
 #define safe_strlen(str) ((((char*)str)==NULL)?0:strlen(str))
-#define safe_strdup _strdup
-#if defined(_MSC_VER)
-#define safe_vsnprintf(buf, size, format, arg) _vsnprintf_s(buf, size, _TRUNCATE, format, arg)
-#else
-#define safe_vsnprintf vsnprintf
-#endif
 
 #ifndef APP_VERSION
 #define APP_VERSION_STR "[DEV]"
 #else
 #define APP_VERSION_STR STRINGIFY(APP_VERSION)
 #endif
+
+extern BOOL SelfSignFile(LPCSTR szFileName, LPCSTR szCertSubject);
 
 static DWORD ReadRegistryKey32(HKEY root, const char* key_name)
 {
@@ -214,7 +199,7 @@ static BOOL TakeOwnership(const char* filename)
 	PACL pACL = NULL;
 	SID_IDENTIFIER_AUTHORITY SIDAuthWorld = SECURITY_WORLD_SID_AUTHORITY;
 	SID_IDENTIFIER_AUTHORITY SIDAuthNT = SECURITY_NT_AUTHORITY;
-	EXPLICIT_ACCESS ea[NUM_ACES];
+	EXPLICIT_ACCESS ea[2];
 	DWORD dwRes;
 	wchar_t* pszFilename = utf8_to_wchar(filename);
 
@@ -244,7 +229,7 @@ static BOOL TakeOwnership(const char* filename)
 		goto Cleanup;
 	}
 
-	ZeroMemory(&ea, NUM_ACES * sizeof(EXPLICIT_ACCESS));
+	ZeroMemory(&ea, 2 * sizeof(EXPLICIT_ACCESS));
 
 	// Set read access for Everyone.
 	ea[0].grfAccessPermissions = GENERIC_READ;
@@ -262,7 +247,7 @@ static BOOL TakeOwnership(const char* filename)
 	ea[1].Trustee.TrusteeType = TRUSTEE_IS_GROUP;
 	ea[1].Trustee.ptstrName = (LPTSTR)pSIDAdmin;
 
-	if (SetEntriesInAcl(NUM_ACES, ea, NULL, &pACL) != ERROR_SUCCESS) {
+	if (SetEntriesInAcl(2, ea, NULL, &pACL) != ERROR_SUCCESS) {
 		fprintf(stderr, "Failed SetEntriesInAcl\n");
 		goto Cleanup;
 	}
@@ -378,47 +363,43 @@ BOOL CreateBackup(const char* path)
 	return bRet;
 }
 
-static BOOL RemoveDigitalSignature(const char* filename)
+static DWORD RemoveDigitalSignature(const char* filename)
 {
-	BOOL bRet = FALSE;
-	DWORD dwNumCerts;
+	DWORD dwNumCerts = -1;
 	HANDLE hFile = NULL;
 
 	hFile = CreateFileU(filename, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
 		NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
 	if (hFile == NULL) {
 		fprintf(stderr, "Could not open file to remove digital signature: Error %u\n", GetLastError());
-		return FALSE;
+		return -1;
 	}
 
 	if (ImageEnumerateCertificates(hFile, CERT_SECTION_TYPE_ANY, &dwNumCerts, NULL, 0)) {
-		switch (dwNumCerts) {
+		switch(dwNumCerts) {
 		case 0:
-			fprintf(stdout, "File is not digitally signed\n");
-			bRet = TRUE;
 			break;
 		case 1:
-			if (ImageRemoveCertificate(hFile, 0)) {
-				fprintf(stdout, "Removed digital signature\n");
-				bRet = TRUE;
-			} else
+			if (!ImageRemoveCertificate(hFile, 0)) {
 				fprintf(stderr, "Could not delete digital signatures: Error %u\n", GetLastError());
+				dwNumCerts = -1;
+			}
 			break;
 		default:
 			fprintf(stderr, "Unexpected number of signatures!\n");
+			dwNumCerts = -1;
 			break;
 		}
 	}
 
 	safe_closehandle(hFile);
-	return bRet;
+	return dwNumCerts;
 }
 
 static BOOL UpdateChecksum(const char* filename, DWORD* dwCheckSum)
 {
 	BOOL bRet = FALSE;
 	HANDLE hFile = NULL, hFileMapping = NULL;
-	PVOID pMappedViewAddress = NULL;
 	PIMAGE_DOS_HEADER pImageDOSHeader = NULL;
 	PIMAGE_NT_HEADERS32 pImageNTHeader32 = NULL;
 	PIMAGE_NT_HEADERS64 pImageNTHeader64 = NULL;
@@ -476,8 +457,8 @@ static BOOL UpdateChecksum(const char* filename, DWORD* dwCheckSum)
 	bRet = TRUE;
 
 out:
-	if (pMappedViewAddress != NULL)
-		UnmapViewOfFile(pMappedViewAddress);
+	if (pImageDOSHeader != NULL)
+		UnmapViewOfFile(pImageDOSHeader);
 	safe_closehandle(hFileMapping);
 	safe_closehandle(hFile);
 	return bRet;
@@ -492,12 +473,12 @@ static int main_utf8(int argc, char** argv)
 
 	if (!IsCurrentProcessElevated()) {
 		fprintf(stderr, "This command must be run from an elevated prompt.\n");
-		return 1;
+		return -1;
 	}
 
 	if (argc < 2) {
 		fprintf(stderr, "Usage: %s path [DWORD DWORD [DWORD DWORD]...].\n", appname(argv[0]));
-		return 10;
+		return -2;
 	}
 
 	fprintf(stderr, "%s %s © 2020 Pete Batard <pete@akeo.ie>\n\n",
@@ -505,50 +486,51 @@ static int main_utf8(int argc, char** argv)
 
 	if (!TakeOwnership(argv[1])) {
 		fprintf(stderr, "Could not take ownership of %s\n", argv[1]);
-		return 2;
+		return -1;
 	}
 
 	if (!CreateBackup(argv[1])) {
 		fprintf(stderr, "Could not create backup of %s\n", argv[1]);
-		return 3;
+		return -1;
 	}
 
 	if (argc <= 2) {
-		fprintf(stderr, "Nothing to patch!\n");
+		fprintf(stderr, "No patch data provided!\n");
 		return -1;
 	}
 
 	if (argc % 2) {
 		fprintf(stderr, "Values must be provided in [ORIGINAL PATCHED] pairs\n");
-		return 4;
+		return -1;
 	}
 
 	// We're not going to win prizes for speed, but who cares...
 	file = fopenU(argv[1], "rb+");
 	if (file == NULL) {
 		fprintf(stderr, "Could not open '%s'\n", argv[1]);
-		return 5;
+		return -1;
 	}
 
 	patch = calloc((size_t)argc - 2, sizeof(uint64_t));
 	if (patch == NULL) {
 		fprintf(stderr, "calloc error\n");
-		return 5;
+		return -1;
 	}
 
 	for (i = 0; i < argc - 2; i++)
 		patch[i] = strtoull(argv[i + 2], NULL, 16);
 
 	for (pos = 0; fread(&val, sizeof(uint64_t), 1, file) == 1; pos += sizeof(uint64_t)) {
-		for (i = 0; i < (argc - 2) / 2; i++) {
-			if (val == patch[2 * i]) {
-				patched++;
-				fprintf(stdout, "%08llX: %016llX -> %016llX... ", pos, val, patch[2 * i + 1]);
+		for (i = 0; i < argc - 2; i += 2) {
+			if (val == patch[i]) {
+				fprintf(stdout, "%08llX: %016llX -> %016llX... ", pos, val, patch[i + 1]);
 				fseek(file, -1 * (long)sizeof(uint64_t), SEEK_CUR);
-				if (fwrite(&patch[2 * i + 1], sizeof(uint64_t), 1, file) != 1)
+				if (fwrite(&patch[i + 1], sizeof(uint64_t), 1, file) != 1) {
 					fprintf(stdout, "ERROR!\n");
-				else
+				} else {
 					fprintf(stdout, "SUCCESS\n");
+					patched++;
+				}
 				fflush(file);
 			}
 		}
@@ -556,30 +538,52 @@ static int main_utf8(int argc, char** argv)
 	free(patch);
 	fclose(file);
 	if (patched == 0) {
-		fprintf(stdout, "Found nothing to patch!\n");
+		fprintf(stdout, "No elements were patched - aborting\n");
 		return 0;
 	}
 
 	// Since the whole point is to alter the file, remove the digital signature
-	RemoveDigitalSignature(argv[1]);
+	r = RemoveDigitalSignature(argv[1]);
+	switch (r) {
+	case 0:
+		fprintf(stdout, "No digital signature to remove\n");
+		break;
+	case 1:
+		fprintf(stdout, "Removed digital signature\n");
+		break;
+	default:
+		fprintf(stderr, "Could not remove digital signature\n");
+		return -1;
+	}
 
 	r = MapFileAndCheckSumU(argv[1], &dwCheckSum[0], &dwCheckSum[1]);
 	if (r != CHECKSUM_SUCCESS) {
 		fprintf(stderr, "Could not compute checksum: %u\n", r);
-		return 6;
+		return -1;
 	}
 
 	fprintf(stdout, "PE Checksum: %08X\n", dwCheckSum[1]);
-	if (dwCheckSum[0] != dwCheckSum[1] && !UpdateChecksum(argv[1], dwCheckSum))
+	if (dwCheckSum[0] != dwCheckSum[1] && !UpdateChecksum(argv[1], dwCheckSum)) {
 		fprintf(stderr, "Could not update checksum\n");
+		return -1;
+	}
 
-	return 0;
+	fprintf(stdout, "Applying digital signature...\n");
+	if (!SelfSignFile(argv[1], "CN = Test Signing Certificate")) {
+		fprintf(stderr, "Could not sign file\n");
+		return -1;
+	}
+	fprintf(stdout, "Successfully patched '%s'\n", argv[1]);
+
+	return patched;
 }
 
 int wmain(int argc, wchar_t** argv16)
 {
 	SetConsoleOutputCP(CP_UTF8);
 	char** argv = calloc(argc, sizeof(char*));
+	if (argv == NULL)
+		return -1;
 	for (int i = 0; i < argc; i++)
 		argv[i] = wchar_to_utf8(argv16[i]);
 	int r = main_utf8(argc, argv);

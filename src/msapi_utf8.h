@@ -35,6 +35,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <psapi.h>
+#include <imagehlp.h>
 
 #pragma once
 #if defined(_MSC_VER)

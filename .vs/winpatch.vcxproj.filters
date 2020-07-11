@@ -14,9 +14,15 @@
     <ClCompile Include="..\src\winpatch.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\winpki.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\src\msapi_utf8.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\mssign32.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
