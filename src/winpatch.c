@@ -470,6 +470,7 @@ static int main_utf8(int argc, char** argv)
 	DWORD r, dwCheckSum[2];
 	int i, patched = 0;
 	uint64_t* patch, val, pos;
+	char system_dir[128];
 
 	if (!IsCurrentProcessElevated()) {
 		fprintf(stderr, "This command must be run from an elevated prompt.\n");
@@ -477,12 +478,20 @@ static int main_utf8(int argc, char** argv)
 	}
 
 	if (argc < 2) {
-		fprintf(stderr, "Usage: %s path [DWORD DWORD [DWORD DWORD]...].\n", appname(argv[0]));
+		fprintf(stderr, "Usage: %s filename [QWORD QWORD [QWORD QWORD]...].\n", appname(argv[0]));
+		fprintf(stderr, "The QWORDs *must* be aligned to 64-bit.\n");
 		return -2;
 	}
 
 	fprintf(stderr, "%s %s © 2020 Pete Batard <pete@akeo.ie>\n\n",
 		appname(argv[0]), APP_VERSION_STR);
+
+	if (GetSystemDirectoryU(system_dir, sizeof(system_dir)) == 0)
+		static_strcpy(system_dir, "C:\\Windows\\System32");
+	if (_strnicmp(argv[1], system_dir, strlen(system_dir)) == 0) {
+		fprintf(stderr, "Patching of active system files is prohibited!\n");
+		return -1;
+	}
 
 	if (!TakeOwnership(argv[1])) {
 		fprintf(stderr, "Could not take ownership of %s\n", argv[1]);
