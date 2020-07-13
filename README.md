@@ -25,6 +25,27 @@ Compilation
 
 Use Visual Studio 2019 and invoke the `.sln` to compile.
 
+Usage
+-----
+
+```
+winpatch target original_qword patched_qword [original_qword patched_qword [...]]
+```
+
+Where:
+* `target` is the path of the system file you want to patch
+* `original_qword` is a **64-bit hex value** that matches the original data you want to patch
+* `patched_qword` is a **64-bit hex value** with the data you want to replace the orignal with.
+
+Note that the qwords are big-endian, which means the hex values should appear in the same byte
+order as the one you see from a hex-dump of the file.
+
+No specific alignment is required on the qwords (meaning that `winpatch` will match and patch
+qwords that start on a odd byte address for instance).
+
+The exit code of winpatch is the number of qwords that were successfully patched (`0` if none
+were) or a negative value on error.
+
 Example
 -------
 
@@ -38,7 +59,7 @@ Provided that the driver for the system you want to patch resides in `F:\Windows
 from an elevated command prompt, you can use `winpatch` as follows:
 
 ```
-winpatch F:\Windows\System32\drivers\USBXHCI.SYS 910063E8370000EA 910063E8360000EA 3700010AD5033F9F 3600010AD5033F9F
+winpatch F:\Windows\System32\drivers\USBXHCI.SYS EA000037E8630091 EA000036E8630091 0A010037E8430091 0A010036E8430091
 ```
 
 Obviously, since you have patched a system file, you also have to disable signature enforcement with
@@ -52,8 +73,7 @@ bcdedit /store S:\EFI\Microsoft\Boot\BCD /set {default} nointegritychecks on
 How it works
 ------------
 
-Besides the patching (which currently __must__ be aligned to 64-bit, i.e. winpatch does match
-with QWORDs that start at a 32-bit offset in the file), winpatch performs the following:
+Besides the patching, winpatch performs the following:
 
 1. Take ownership of the system file if needed.
 2. Delete the existing digital signature, if any.

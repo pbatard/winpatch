@@ -36,6 +36,8 @@
 #include "msapi_utf8.h"
 
 #pragma comment(lib, "imagehlp.lib")
+#pragma comment(lib, "shlwapi.lib")
+#pragma intrinsic(_byteswap_uint64)
 
 #define _STRINGIFY(x) #x
 #define STRINGIFY(x) _STRINGIFY(x)
@@ -479,17 +481,24 @@ static int main_utf8(int argc, char** argv)
 
 	if (argc < 2) {
 		fprintf(stderr, "Usage: %s filename [QWORD QWORD [QWORD QWORD]...].\n", appname(argv[0]));
-		fprintf(stderr, "The QWORDs *must* be aligned to 64-bit.\n");
 		return -2;
 	}
 
-	fprintf(stderr, "%s %s © 2020 Pete Batard <pete@akeo.ie>\n\n",
-		appname(argv[0]), APP_VERSION_STR);
+	fprintf(stderr, "%s %s © 2020 Pete Batard <pete@akeo.ie>\n\n", appname(argv[0]), APP_VERSION_STR);
+	fprintf(stderr, "This program is free software; you can redistribute it and/or modify it under \n");
+	fprintf(stderr, "the terms of the GNU General Public License as published by the Free Software \n");
+	fprintf(stderr, "Foundation; either version 3 of the License or any later version.\n\n");
+	fprintf(stderr, "Official project and latest downloads at: https://github.com/pbatard/winpatch\n\n");
 
 	if (GetSystemDirectoryU(system_dir, sizeof(system_dir)) == 0)
 		static_strcpy(system_dir, "C:\\Windows\\System32");
 	if (_strnicmp(argv[1], system_dir, strlen(system_dir)) == 0) {
 		fprintf(stderr, "Patching of active system files is prohibited!\n");
+		return -1;
+	}
+
+	if (!PathFileExistsU(argv[1])) {
+		fprintf(stderr, "File '%s' doesn't exist\n", argv[1]);
 		return -1;
 	}
 
@@ -529,20 +538,32 @@ static int main_utf8(int argc, char** argv)
 	for (i = 0; i < argc - 2; i++)
 		patch[i] = strtoull(argv[i + 2], NULL, 16);
 
-	for (pos = 0; fread(&val, sizeof(uint64_t), 1, file) == 1; pos += sizeof(uint64_t)) {
+	if (fread(&val, 1, 7, file) != 7) {
+		fprintf(stderr, "Could not read file\n");
+		return -1;
+	}
+	val = _byteswap_uint64(val);
+	for (pos = 0; fread(&val, 1, 1, file) == 1; pos++) {
 		for (i = 0; i < argc - 2; i += 2) {
 			if (val == patch[i]) {
-				fprintf(stdout, "%08llX: %016llX -> %016llX... ", pos, val, patch[i + 1]);
+				fprintf(stdout, "%08llX: %016llX -> %016llX... ", pos, patch[i], patch[i + 1]);
 				fseek(file, -1 * (long)sizeof(uint64_t), SEEK_CUR);
-				if (fwrite(&patch[i + 1], sizeof(uint64_t), 1, file) != 1) {
+				val = _byteswap_uint64(patch[i + 1]);
+				if (fwrite(&val, sizeof(uint64_t), 1, file) != 1) {
 					fprintf(stdout, "ERROR!\n");
 				} else {
 					fprintf(stdout, "SUCCESS\n");
 					patched++;
+					fflush(file);
+					// We don't allow patch overlap so move 7 bytes ahead
+					pos += fread(&val, 1, 7, file);
+					val = _byteswap_uint64(val) >> 8;
 				}
 				fflush(file);
+				break;
 			}
 		}
+		val <<= 8;
 	}
 	free(patch);
 	fclose(file);

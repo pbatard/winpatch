@@ -19,7 +19,8 @@
  */
 
 /* Memory leaks detection - define _CRTDBG_MAP_ALLOC as preprocessor macro */
-#ifdef _CRTDBG_MAP_ALLOC
+#ifdef _DEBUG
+#define _CRTDBG_MAP_ALLOC
 #include <stdlib.h>
 #include <crtdbg.h>
 #endif
@@ -69,7 +70,7 @@ static char* winpki_error_str(void)
 	if (error_code == 0x800706D9)
 		return "This system is missing required cryptographic services";
 	if (error_code == 0x80070020)
-		return "Cannot sign file residing in a system directory";
+		return "Some data handles to this file have not been properly closed";
 
 	if ((error_code >> 16) != 0x8009) {
 		static_sprintf(error_string, "Windows error 0x%08X", error_code);
@@ -208,7 +209,7 @@ PCCERT_CONTEXT CreateSelfSignedCert(LPCSTR szCertSubject)
 	certExtension[0].Value.cbData = dwSize;
 	certExtension[0].Value.pbData = pbEnhKeyUsage;
 
-	// Set URL as Alt Name parameter
+	// Set Alt Name parameter
 	if ( (!CryptEncodeObject(X509_ASN_ENCODING, X509_ALTERNATE_NAME, (LPVOID)&certAltNameInfo, NULL, &dwSize))
 	  || ((pbAltNameInfo = (BYTE*)malloc(dwSize)) == NULL)
 	  || (!CryptEncodeObject(X509_ASN_ENCODING, X509_ALTERNATE_NAME, (LPVOID)&certAltNameInfo, pbAltNameInfo, &dwSize)) ) {
@@ -372,11 +373,10 @@ BOOL SelfSignFile(LPCSTR szFileName, LPCSTR szCertSubject)
 	PF_DECL(SignerFreeSignerContext);
 
 	BOOL r = FALSE;
-	LPWSTR wszFileName = NULL;
 	HRESULT hResult = S_OK;
 	PCCERT_CONTEXT pCertContext = NULL;
 	DWORD dwIndex;
-	SIGNER_FILE_INFO signerFileInfo;
+	SIGNER_FILE_INFO signerFileInfo = { 0 };
 	SIGNER_SUBJECT_INFO signerSubjectInfo;
 	SIGNER_CERT_STORE_INFO signerCertStoreInfo;
 	SIGNER_CERT signerCert;
@@ -458,7 +458,7 @@ BOOL SelfSignFile(LPCSTR szFileName, LPCSTR szCertSubject)
 out:
 	if (pCertContext != NULL)
 		DeletePrivateKey(pCertContext);
-	free((void*)wszFileName);
+	free((void*)signerFileInfo.pwszFileName);
 	if (pSignerContext != NULL)
 		pfSignerFreeSignerContext(pSignerContext);
 	if (pCertContext != NULL)
