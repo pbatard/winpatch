@@ -68,9 +68,9 @@ static char* winpki_error_str(void)
 	uint32_t error_code = GetLastError();
 
 	if (error_code == 0x800706D9)
-		return "This system is missing required cryptographic services";
+		return "This system is missing required cryptographic services.";
 	if (error_code == 0x80070020)
-		return "Some data handles to this file have not been properly closed";
+		return "Sharing violation - Some data handles to this file are still open.";
 
 	if ((error_code >> 16) != 0x8009) {
 		static_sprintf(error_string, "Windows error 0x%08X", error_code);
@@ -308,19 +308,14 @@ out:
 }
 
 /*
- * Delete the private key associated with a specific cert
+ * Delete the certificate and its associated private key
  */
-BOOL DeletePrivateKey(PCCERT_CONTEXT pCertContext)
+BOOL DeleteCertAndPrivateKey(PCCERT_CONTEXT pCertContext)
 {
 	LPWSTR wszKeyContainer = KEY_CONTAINER;
 	HCRYPTPROV hCSP = 0;
 	DWORD dwKeySpec;
 	BOOL bFreeCSP = FALSE, r = FALSE;
-	HCERTSTORE hSystemStore;
-	LPCSTR szStoresToUpdate[2] = { "Root", "TrustedPublisher" };
-	CRYPT_DATA_BLOB libwdiNameBlob = {14, (BYTE*)L"libwdi"};
-	PCCERT_CONTEXT pCertContextUpdate = NULL;
-	int i;
 
 	if (!CryptAcquireCertificatePrivateKey(pCertContext, CRYPT_ACQUIRE_SILENT_FLAG, NULL, &hCSP, &dwKeySpec, &bFreeCSP)) {
 		fprintf(stderr, "Error getting CSP: %s\n", winpki_error_str());
@@ -331,27 +326,10 @@ BOOL DeletePrivateKey(PCCERT_CONTEXT pCertContext)
 		fprintf(stderr, "Failed to delete private key: %s\n", winpki_error_str());
 	}
 
-	// This is optional, but unless we reimport the cert data after having deleted the key
-	// end users will still see a "You have a private key that corresponds to this certificate" message.
-	for (i=0; i<ARRAYSIZE(szStoresToUpdate); i++) {
-		hSystemStore = CertOpenStore(CERT_STORE_PROV_SYSTEM_A, X509_ASN_ENCODING,
-			0, CERT_SYSTEM_STORE_LOCAL_MACHINE, szStoresToUpdate[i]);
-		if (hSystemStore == NULL) continue;
-
-		if ( (CertAddEncodedCertificateToStore(hSystemStore, X509_ASN_ENCODING, pCertContext->pbCertEncoded,
-			pCertContext->cbCertEncoded, CERT_STORE_ADD_REPLACE_EXISTING, &pCertContextUpdate)) && (pCertContextUpdate != NULL) ) {
-			// The friendly name is lost in this operation - restore it
-			if (!CertSetCertificateContextProperty(pCertContextUpdate, CERT_FRIENDLY_NAME_PROP_ID, 0, &libwdiNameBlob)) {
-				fprintf(stderr, "Could not set friendly name: %s\n", winpki_error_str());
-			}
-			CertFreeCertificateContext(pCertContextUpdate);
-		} else {
-			fprintf(stderr, "Failed to update '%s': %s\n", szStoresToUpdate[i], winpki_error_str());
-		}
-		CertCloseStore(hSystemStore, 0);
+	r = CertDeleteCertificateFromStore(pCertContext);
+	if (!r) {
+		fprintf(stderr, "Failed to delete store certificate: %s\n", winpki_error_str());
 	}
-
-	r= TRUE;
 
 out:
 	if ((bFreeCSP) && (hCSP)) {
@@ -364,7 +342,7 @@ out:
  * Digitally sign a file by:
  * - creating a self signed certificate for code signing
  * - signing the file provided
- * - deleting the self signed certificate private key
+ * - deleting the self signed certificate and private key
  */
 BOOL SelfSignFile(LPCSTR szFileName, LPCSTR szCertSubject)
 {
@@ -457,7 +435,7 @@ BOOL SelfSignFile(LPCSTR szFileName, LPCSTR szCertSubject)
 
 out:
 	if (pCertContext != NULL)
-		DeletePrivateKey(pCertContext);
+		DeleteCertAndPrivateKey(pCertContext);
 	free((void*)signerFileInfo.pwszFileName);
 	if (pSignerContext != NULL)
 		pfSignerFreeSignerContext(pSignerContext);
