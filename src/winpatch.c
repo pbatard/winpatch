@@ -32,6 +32,7 @@
 #include <accctrl.h>
 #include <aclapi.h>
 #include <imagehlp.h>
+#include <assert.h>
 
 #include "msapi_utf8.h"
 
@@ -41,6 +42,8 @@
 
 #define _STRINGIFY(x) #x
 #define STRINGIFY(x) _STRINGIFY(x)
+#define MIN_CHUNK_SIZE 2
+#define MAX_CHUNK_SIZE 128
 
 #define safe_free(p) do {free((void*)p); p = NULL;} while(0)
 #define safe_min(a, b) min((size_t)(a), (size_t)(b))
@@ -466,25 +469,77 @@ out:
 	return bRet;
 }
 
+typedef struct {
+	size_t size;
+	uint8_t* org;
+	uint8_t* new;
+	bool patched;
+} chunk;
+
+static void FreeChunkList(chunk* list, size_t size)
+{
+	size_t i;
+	for (i = 0; i < size; i++) {
+		free(list[i].org);
+		free(list[i].new);
+	}
+	free(list);
+}
+
+static uint8_t* HexStringToBin(const char* str)
+{
+	size_t i, len = safe_strlen(str);
+	uint8_t val = 0, * ret = NULL;
+	char c;
+
+	if ((len < 2) || (len % 2))
+		return NULL;
+	ret = malloc(len / 2);
+	if (ret == NULL)
+		return NULL;
+
+	for (i = 0; i < len; i++) {
+		val <<= 4;
+		c = (char)tolower(str[i]);
+		if (c < '0' || (c > '9' && c < 'a') || c > 'f') {
+			fprintf(stderr, "Invalid hex character '%c' in string '%s'\n", c, str);
+			return NULL;
+		}
+		val |= ((c - '0') < 0xa) ? (c - '0') : (c - 'a' + 0xa);
+		if (i % 2)
+			ret[i / 2] = val;
+	}
+
+	return ret;
+}
+
 static int main_utf8(int argc, char** argv)
 {
 	FILE* file = NULL;
 	DWORD r, dwCheckSum[2];
 	int i, patched = 0;
-	uint64_t* patch, val, pos;
+	uint64_t pos;
+	uint8_t val[MAX_CHUNK_SIZE];
+	chunk* chunk_list;
 	char system_dir[128];
+	size_t chunk_list_size, min_chunk_size = MAX_CHUNK_SIZE, max_chunk_size = 0;
+	size_t val_size;
+	bool force = false;
 
 	if (!IsCurrentProcessElevated()) {
 		fprintf(stderr, "This command must be run from an elevated prompt.\n");
 		return -1;
 	}
 
-	if (argc < 2) {
-		fprintf(stderr, "Usage: %s filename [QWORD QWORD [QWORD QWORD]...].\n", appname(argv[0]));
+	fprintf(stderr, "%s %s © 2020 Pete Batard <pete@akeo.ie>\n\n", appname(argv[0]), APP_VERSION_STR);
+
+	if ((argc < 2) || (((argv[1][0] == '/') || (argv[1][0] == '-')) && ((argv[1][1] == '?') || (argv[1][1] == 'h')))) {
+		fprintf(stderr, "Usage: %s filename <SEARCH> <REPLACE> [<SEARCH> <REPLACE> [...]].\n", appname(argv[0]));
+		fprintf(stderr, "Where <SEARCH> and <REPLACE> are string of the same size, containing\n");
+		fprintf(stderr, "the hex data that should be searched and replaced.\n");
 		return -2;
 	}
 
-	fprintf(stderr, "%s %s © 2020 Pete Batard <pete@akeo.ie>\n\n", appname(argv[0]), APP_VERSION_STR);
 	fprintf(stderr, "This program is free software; you can redistribute it and/or modify it under \n");
 	fprintf(stderr, "the terms of the GNU General Public License as published by the Free Software \n");
 	fprintf(stderr, "Foundation; either version 3 of the License or any later version.\n\n");
@@ -517,61 +572,110 @@ static int main_utf8(int argc, char** argv)
 		return -1;
 	}
 
+	if (((argv[2][0] == '/') || (argv[2][0] == '-')) && (argv[2][1] == 'f'))
+		goto skip_patch;
+
 	if (argc % 2) {
-		fprintf(stderr, "Values must be provided in [ORIGINAL PATCHED] pairs\n");
+		fprintf(stderr, "Values must be provided in [<SEARCH> <REPLACE>] pairs\n");
 		return -1;
 	}
 
-	// We're not going to win prizes for speed, but who cares...
 	file = fopenU(argv[1], "rb+");
 	if (file == NULL) {
 		fprintf(stderr, "Could not open '%s'\n", argv[1]);
 		return -1;
 	}
 
-	patch = calloc((size_t)argc - 2, sizeof(uint64_t));
-	if (patch == NULL) {
+	chunk_list_size = ((size_t)argc - 2) / 2;
+	chunk_list = calloc(chunk_list_size, sizeof(chunk));
+	if (chunk_list == NULL) {
 		fprintf(stderr, "calloc error\n");
 		return -1;
 	}
 
-	for (i = 0; i < argc - 2; i++)
-		patch[i] = strtoull(argv[i + 2], NULL, 16);
+	for (i = 1; i < argc / 2; i++) {
+		chunk_list[i - 1].patched = false;
+		chunk_list[i - 1].size = strlen(argv[2 * i]);
+		if (chunk_list[i - 1].size % 2) {
+			fprintf(stderr, "The number of hex digits for %s must be a multiple of 2\n",
+				argv[(2 * i) - 1]);
+			FreeChunkList(chunk_list, chunk_list_size);
+			return -1;
+		}
+		if (chunk_list[i - 1].size != strlen(argv[2 * i + 1])) {
+			fprintf(stderr, "<SEARCH> and <REPLACE> length differ for arguments %s and %s\n",
+				argv[(2 * i) - 1], argv[2 * i]);
+			FreeChunkList(chunk_list, chunk_list_size);
+			return -1;
+		}
+		chunk_list[i - 1].size /= 2;
+		if ((chunk_list[i - 1].size < MIN_CHUNK_SIZE) || (chunk_list[i - 1].size > MAX_CHUNK_SIZE)) {
+			fprintf(stderr, "A value can not be smaller than %d bytes or larger than %d bytes\n",
+				MIN_CHUNK_SIZE, MAX_CHUNK_SIZE);
+			FreeChunkList(chunk_list, chunk_list_size);
+			return -1;
+		}
+		min_chunk_size = min(min_chunk_size, chunk_list[i - 1].size);
+		max_chunk_size = max(max_chunk_size, chunk_list[i - 1].size);
+		chunk_list[i - 1].org = HexStringToBin(argv[2 * i]);
+		chunk_list[i - 1].new = HexStringToBin(argv[2 * i + 1]);
+		if (chunk_list[i - 1].org == NULL || chunk_list[i - 1].new == NULL) {
+			fprintf(stderr, "Could not convert hex string\n");
+			FreeChunkList(chunk_list, chunk_list_size);
+			return -1;
+		}
+	}
 
-	if (fread(&val, 1, 7, file) != 7) {
+	val_size = min_chunk_size - 1;
+	if (fread(val, 1, val_size, file) != val_size) {
 		fprintf(stderr, "Could not read file\n");
+		FreeChunkList(chunk_list, chunk_list_size);
 		return -1;
 	}
-	val = _byteswap_uint64(val);
-	for (pos = 0; fread(&val, 1, 1, file) == 1; pos++) {
-		for (i = 0; i < argc - 2; i += 2) {
-			if (val == patch[i]) {
-				fprintf(stdout, "%08llX: %016llX -> %016llX... ", pos, patch[i], patch[i + 1]);
-				fseek(file, -1 * (long)sizeof(uint64_t), SEEK_CUR);
-				val = _byteswap_uint64(patch[i + 1]);
-				if (fwrite(&val, sizeof(uint64_t), 1, file) != 1) {
+
+	for (pos = 0; ; pos++) {
+		assert(val_size < max_chunk_size);
+		if (fread(&val[val_size++], 1, 1, file) != 1)
+			// Note: If we have a patch smaller than max_chunk_size at the very end,
+			// it won't be applied because we break too soon. But we don't care about
+			// this in this patcher because the end should be the digital signature...
+			break;
+		for (i = 0; i < (int)chunk_list_size; i++) {
+			if ((chunk_list[i].size <= val_size) && (memcmp(chunk_list[i].org, val, chunk_list[i].size) == 0)) {
+				if (chunk_list[i].patched) {
+					fprintf(stderr, "WARNING: Multiple sections with data %s are being patched!\n", argv[2 * i + 2]);
+				}
+				fprintf(stdout, "%08llX: %s\n========> %s... ", pos, argv[2 * i + 2], argv[2 * i + 3]);
+				memcpy(val, chunk_list[i].new, chunk_list[i].size);
+				fseek(file, (long)pos, SEEK_SET);
+				if (fwrite(&val, 1, chunk_list[i].size, file) != chunk_list[i].size) {
 					fprintf(stdout, "ERROR!\n");
 				} else {
 					fprintf(stdout, "SUCCESS\n");
+					chunk_list[i].patched = true;
 					patched++;
-					fflush(file);
-					// We don't allow patch overlap so move 7 bytes ahead
-					pos += fread(&val, 1, 7, file);
-					val = _byteswap_uint64(val) >> 8;
 				}
 				fflush(file);
+				// Now reposition ourselves to the next byte to read...
+				fseek(file, (long)pos + val_size, SEEK_SET);
+				// ...and prevent patch overlap by removing our data
+				val_size -= chunk_list[i].size;
+				memmove(val, &val[chunk_list[i].size], val_size);
 				break;
 			}
 		}
-		val <<= 8;
+		if (val_size == max_chunk_size)
+			memmove(val, &val[1], --val_size);
 	}
-	free(patch);
+
+	FreeChunkList(chunk_list, chunk_list_size);
 	fclose(file);
 	if (patched == 0) {
 		fprintf(stdout, "No elements were patched - aborting\n");
 		return 0;
 	}
 
+skip_patch:
 	// Since the whole point is to alter the file, remove the digital signature
 	r = RemoveDigitalSignature(argv[1]);
 	switch (r) {

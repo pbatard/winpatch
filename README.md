@@ -29,22 +29,28 @@ Usage
 -----
 
 ```
-winpatch target original_qword patched_qword [original_qword patched_qword [...]]
+winpatch target <SEARCH> <REPLACE> [<SEARCH> <REPLACE> [...]]
 ```
 
 Where:
-* `target` is the path of the system file you want to patch
-* `original_qword` is a **64-bit hex value** that matches the original data you want to patch
-* `patched_qword` is a **64-bit hex value** with the data you want to replace the orignal with.
+* `target` is the path of the system file you want to patch.
+* `<SEARCH>` is a hex string that matches the original data you want to patch.
+* `<REPLACE>` is a hex string containing the data you want to replace it with.
 
-Note that the qwords are big-endian, which means the hex values should appear in the same byte
-order as the one you see from a hex-dump of the file.
+The hex strings can be of any length between 2 and 128 bytes, as long as the `<SEARCH>`
+and `<REPLACE>` strings that make one pair are of the same length.
 
-No specific alignment is required on the qwords (meaning that `winpatch` will match and patch
-qwords that start on a odd byte address for instance).
+Subsequent pairs are not required to have the same length as the previous one, meaning
+that you can issue something like `winpatch driver.sys ABCD 9090 12345678 00000000`.
 
-The exit code of winpatch is the number of qwords that were successfully patched (`0` if none
-were) or a negative value on error.
+The hex values should be provided in the same byte order as the one you see from a
+hex-dump of the file, i.e. big-endian.
+
+No specific alignment is required on the data, meaning that `winpatch` will match and
+patch data that start on a odd byte address for instance.
+
+The exit code of winpatch is the number of qwords that were successfully patched (`0`
+if none) or a negative value on error.
 
 Example
 -------
