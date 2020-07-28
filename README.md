@@ -29,28 +29,35 @@ Usage
 -----
 
 ```
-winpatch target <SEARCH> <REPLACE> [<SEARCH> <REPLACE> [...]]
+winpatch [-bhosw] FILE [HEXVAL HEXVAL [HEXVAL HEXVAL [...]]
 ```
 
-Where:
-* `target` is the path of the system file you want to patch.
-* `<SEARCH>` is a hex string that matches the original data you want to patch.
-* `<REPLACE>` is a hex string containing the data you want to replace it with.
+Where HEXVALs are paired values containing the hexadecimal data to
+search for, followed by the data you want to replace it with.
 
-The hex strings can be of any length between 2 and 128 bytes, as long as the `<SEARCH>`
-and `<REPLACE>` strings that make one pair are of the same length.
+HEXVAL can be of any size between 2 and 128 bytes. You can mix and
+match sizes, as long the value sizes in each pair are the same.
 
-Subsequent pairs are not required to have the same length as the previous one, meaning
-that you can issue something like `winpatch driver.sys ABCD 9090 12345678 00000000`.
+No specific alignment is required for the HEXVALs, meaning that
+winpatch can match a word value starting at an odd address.
 
-The hex values should be provided in the same byte order as the one you see from a
-hex-dump of the file, i.e. big-endian.
+Values should be provided in big-endian mode i.e. in the same byte
+order as the one they appear with in the hex-dump of the file.
 
-No specific alignment is required on the data, meaning that `winpatch` will match and
-patch data that start on a odd byte address for instance.
+Unless you use option -w, winpatch will warn (once) if multiple
+instances of a specific HEXVAL pair are patched.
 
 The exit code of winpatch is the number of qwords that were successfully patched (`0`
 if none) or a negative value on error.
+
+Options
+-------
+
+* `-h`: Show help
+* `-b`: __DON'T__ create a backup before patching the file (DANGEROUS).
+* `-o`: Overwrite the source with the backup (if any) before patching.
+* `-s`: Update the digital signature only (Don't patch).
+* `-w`: Don't warn when multiple instances of a patch are applied.
 
 Example
 -------
