@@ -32,23 +32,20 @@ Usage
 winpatch [-bhosw] FILE [HEXVAL HEXVAL [HEXVAL HEXVAL [...]]
 ```
 
-Where HEXVALs are paired values containing the hexadecimal data to
-search for, followed by the data you want to replace it with.
+Where `HEXVAL`s are paired values containing the hexadecimal data to search for,
+followed by the data you want to replace it with.
 
-HEXVAL can be of any size between 2 and 128 bytes. You can mix and
-match sizes, as long the value sizes in each pair are the same.
+`HEXVAL` can be of any size between 2 and 128 bytes. You can mix and match sizes,
+as long the value sizes in each pair are the same. No specific alignment is required
+for the `HEXVAL`s, meaning that winpatch can match a word value starting at an odd
+address. Values should be provided in big-endian mode i.e. in the same byte order as
+the one they appear with in the hex-dump of the file.
 
-No specific alignment is required for the HEXVALs, meaning that
-winpatch can match a word value starting at an odd address.
+Unless you use option `-w`, winpatch will warn (once) if multiple instances of a
+specific `HEXVAL` pair are patched.
 
-Values should be provided in big-endian mode i.e. in the same byte
-order as the one they appear with in the hex-dump of the file.
-
-Unless you use option -w, winpatch will warn (once) if multiple
-instances of a specific HEXVAL pair are patched.
-
-The exit code of winpatch is the number of qwords that were successfully patched (`0`
-if none) or a negative value on error.
+The exit code of winpatch is the number of sections that were successfully patched
+(`0` if none) or a negative value on error.
 
 Options
 -------
