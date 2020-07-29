@@ -536,7 +536,7 @@ static int main_utf8(int argc, char** argv)
 	size_t val_size, short_arg_size = 0, hex_value_size = 0;
 	bool help, skip_patch, overwrite_source, warn_on_multiple, use_backup;
 
-	fprintf(stderr, "%s %s © 2020 Pete Batard <pete@akeo.ie>\n\n", appname(argv[0]), APP_VERSION_STR);
+	fprintf(stdout, "%s %s © 2020 Pete Batard <pete@akeo.ie>\n\n", appname(argv[0]), APP_VERSION_STR);
 
 	if (!IsCurrentProcessElevated()) {
 		fprintf(stderr, "This command must be run from an elevated prompt.\n");
@@ -568,34 +568,34 @@ static int main_utf8(int argc, char** argv)
 	warn_on_multiple = (strchr(short_arg, 'w') == NULL);
 
 	if ((!skip_patch && (hex_value_size < 2)) || help) {
-		fprintf(stderr, "DESCRIPTION\n  Take ownership, patch, update checksum and update digital\n");
-		fprintf(stderr, "  signature (self-sign) of a PE executable.\n\n");
-		fprintf(stderr, "USAGE\n  %s [-bhosw] FILE [HEXVAL HEXVAL [HEXVAL HEXVAL [...]]\n\n", appname(argv[0]));
-		fprintf(stderr, "  Where HEXVALs are paired values containing the hexadecimal data to\n");
-		fprintf(stderr, "  search for, followed by the data you want to replace it with.\n\n");
-		fprintf(stderr, "  HEXVAL can be of any size between %d and %d bytes. You can mix and\n",
+		fprintf(stdout, "DESCRIPTION\n  Take ownership, patch, update checksum and update digital\n");
+		fprintf(stdout, "  signature (self-sign) of a PE executable.\n\n");
+		fprintf(stdout, "USAGE\n  %s [-bhosw] FILE [HEXVAL HEXVAL [HEXVAL HEXVAL [...]]\n\n", appname(argv[0]));
+		fprintf(stdout, "  Where HEXVALs are paired values containing the hexadecimal data to\n");
+		fprintf(stdout, "  search for, followed by the data you want to replace it with.\n\n");
+		fprintf(stdout, "  HEXVAL can be of any size between %d and %d bytes. You can mix and\n",
 			MIN_CHUNK_SIZE, MAX_CHUNK_SIZE);
-		fprintf(stderr, "  match sizes, as long the value sizes in each pair are the same.\n\n");
-		fprintf(stderr, "  No specific alignment is required for the HEXVALs, meaning that\n");
-		fprintf(stderr, "  %s can match a word value starting at an odd address.\n\n",
+		fprintf(stdout, "  match sizes, as long the value sizes in each pair are the same.\n\n");
+		fprintf(stdout, "  No specific alignment is required for the HEXVALs, meaning that\n");
+		fprintf(stdout, "  %s can match a word value starting at an odd address.\n\n",
 			appname(argv[0]));
-		fprintf(stderr, "  Values should be provided in big-endian mode i.e. in the same byte\n");
-		fprintf(stderr, "  order as the one they appear with in the hex-dump of the file.\n\n");
-		fprintf(stderr, "  Unless you use option -w, %s will warn (once) if multiple\n",
+		fprintf(stdout, "  Values should be provided in big-endian mode i.e. in the same byte\n");
+		fprintf(stdout, "  order as the one they appear with in the hex-dump of the file.\n\n");
+		fprintf(stdout, "  Unless you use option -w, %s will warn (once) if multiple\n",
 			appname(argv[0]));
-		fprintf(stderr, "  instances of a specific HEXVAL pair are patched.\n\n");
-		fprintf(stderr, "OPTIONS\n  -h: This help text.\n");
-		fprintf(stderr, "  -b: DON'T create a backup before patching the file (DANGEROUS).\n");
-		fprintf(stderr, "  -o: Overwrite the source with the backup (if any) before patching.\n");
-		fprintf(stderr, "  -s: Update the digital signature only (Don't patch).\n");
-		fprintf(stderr, "  -w: Don't warn when multiple instances of a patch are applied.\n");
+		fprintf(stdout, "  instances of a specific HEXVAL pair are patched.\n\n");
+		fprintf(stdout, "OPTIONS\n  -h: This help text.\n");
+		fprintf(stdout, "  -b: DON'T create a backup before patching the file (DANGEROUS).\n");
+		fprintf(stdout, "  -o: Overwrite the source with the backup (if any) before patching.\n");
+		fprintf(stdout, "  -s: Update the digital signature only (Don't patch).\n");
+		fprintf(stdout, "  -w: Don't warn when multiple instances of a patch are applied.\n");
 		return -2;
 	}
 
-	fprintf(stderr, "This program is free software; you can redistribute it and/or modify it under \n");
-	fprintf(stderr, "the terms of the GNU General Public License as published by the Free Software \n");
-	fprintf(stderr, "Foundation; either version 3 of the License or any later version.\n\n");
-	fprintf(stderr, "Official project and latest downloads at: https://github.com/pbatard/winpatch.\n\n");
+	fprintf(stdout, "This program is free software; you can redistribute it and/or modify it under \n");
+	fprintf(stdout, "the terms of the GNU General Public License as published by the Free Software \n");
+	fprintf(stdout, "Foundation; either version 3 of the License or any later version.\n\n");
+	fprintf(stdout, "Official project and latest downloads at: https://github.com/pbatard/winpatch.\n\n");
 
 	if (GetSystemDirectoryU(system_dir, sizeof(system_dir)) == 0)
 		static_strcpy(system_dir, "C:\\Windows\\System32");
