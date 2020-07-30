@@ -43,17 +43,25 @@
 #pragma comment(lib, "shlwapi.lib")
 #pragma intrinsic(_byteswap_uint64)
 
-#define _STRINGIFY(x)       #x
-#define STRINGIFY(x)        _STRINGIFY(x)
-#define MIN_CHUNK_SIZE      2
-#define MAX_CHUNK_SIZE      128
-#define MAX_HEX_VALUES      32
-
-#ifndef APP_VERSION
-#define APP_VERSION_STR     "[DEV]"
-#else
-#define APP_VERSION_STR     STRINGIFY(APP_VERSION)
+#define _STRINGIFY(x)               #x
+#define STRINGIFY(x)                _STRINGIFY(x)
+#define MIN_CHUNK_SIZE              2
+#define MAX_CHUNK_SIZE              128
+#define MAX_HEX_VALUES              32
+#define HEX_SPLIT                   64
+#ifndef IMAGE_FILE_MACHINE_RISCV64
+#define IMAGE_FILE_MACHINE_RISCV64  0x5064
 #endif
+#ifndef APP_VERSION
+#define APP_VERSION_STR             "[DEV]"
+#else
+#define APP_VERSION_STR             STRINGIFY(APP_VERSION)
+#endif
+
+#define pout(fmt, ...) do {fprintf(stdout, fmt, __VA_ARGS__); fflush(stdout);} while(0)
+#define spout(fmt, ...) do {if (!silent) pout(fmt, __VA_ARGS__);} while(0)
+#define vpout(fmt, ...) do {if (verbose) pout(fmt, __VA_ARGS__);} while(0)
+#define perr(fmt, ...) fprintf(stderr, fmt, __VA_ARGS__)
 
 #define safe_free(p) do {free((void*)p); p = NULL;} while(0)
 #define safe_min(a, b) min((size_t)(a), (size_t)(b))
@@ -65,6 +73,8 @@
 #define static_strcat(dst, src) safe_strcat(dst, sizeof(dst), src)
 #define safe_closehandle(h) do {if ((h != INVALID_HANDLE_VALUE) && (h != NULL)) {CloseHandle(h); h = INVALID_HANDLE_VALUE;}} while(0)
 #define safe_strlen(str) ((((char*)str)==NULL)?0:strlen(str))
+#define safe_sprintf(dst, count, ...) do {_snprintf_s(dst, count, _TRUNCATE, __VA_ARGS__); (dst)[(count)-1] = 0; } while(0)
+#define static_sprintf(dst, ...) safe_sprintf(dst, sizeof(dst), __VA_ARGS__)
 
 typedef struct {
 	size_t size;
@@ -74,6 +84,7 @@ typedef struct {
 } chunk;
 
 extern BOOL SelfSignFile(LPCSTR szFileName, LPCSTR szCertSubject);
+BOOL silent = FALSE, verbose = FALSE;
 
 static DWORD ReadRegistryKey32(HKEY root, const char* key_name)
 {
@@ -133,11 +144,11 @@ BOOL IsCurrentProcessElevated(void)
 
 	if (ReadRegistryKey32(HKEY_LOCAL_MACHINE, "Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\System\\EnableLUA") == 1) {
 		if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
-			fprintf(stderr, "Could not get current process token: Error %u\n", GetLastError());
+			perr("Could not get current process token: Error %u\n", GetLastError());
 			goto out;
 		}
 		if (!GetTokenInformation(token, TokenElevation, &te, sizeof(te), &size)) {
-			fprintf(stderr, "Could not get token information: Error %u\n", GetLastError());
+			perr("Could not get token information: Error %u\n", GetLastError());
 			goto out;
 		}
 		r = (te.TokenIsElevated != 0);
@@ -172,7 +183,7 @@ static BOOL SetPrivilege(
 		lpszPrivilege,   // privilege to lookup 
 		&luid))          // receives LUID of privilege
 	{
-		fprintf(stderr, "LookupPrivilegeValue error: %u\n", GetLastError());
+		perr("LookupPrivilegeValue error: %u\n", GetLastError());
 		return FALSE;
 	}
 
@@ -191,12 +202,12 @@ static BOOL SetPrivilege(
 		sizeof(TOKEN_PRIVILEGES),
 		(PTOKEN_PRIVILEGES)NULL,
 		(PDWORD)NULL)) {
-		fprintf(stderr, "AdjustTokenPrivileges error: %u\n", GetLastError());
+		perr("AdjustTokenPrivileges error: %u\n", GetLastError());
 		return FALSE;
 	}
 
 	if (GetLastError() == ERROR_NOT_ALL_ASSIGNED) {
-		fprintf(stderr, "The token does not have the specified privilege.\n");
+		perr("The token does not have the specified privilege.\n");
 		return FALSE;
 	}
 
@@ -220,7 +231,7 @@ static BOOL TakeOwnership(const char* filename)
 	wchar_t* pszFilename = utf8_to_wchar(filename);
 
 	if (pszFilename == NULL) {
-		fprintf(stderr, "Could not convert filename '%s'\n", filename);
+		perr("Could not convert filename '%s'\n", filename);
 		goto Cleanup;
 	}
 
@@ -231,7 +242,7 @@ static BOOL TakeOwnership(const char* filename)
 		0,
 		0, 0, 0, 0, 0, 0,
 		&pSIDEveryone)) {
-		fprintf(stderr, "AllocateAndInitializeSid (Everyone): Error %u\n", GetLastError());
+		perr("AllocateAndInitializeSid (Everyone): Error %u\n", GetLastError());
 		goto Cleanup;
 	}
 
@@ -241,7 +252,7 @@ static BOOL TakeOwnership(const char* filename)
 		DOMAIN_ALIAS_RID_ADMINS,
 		0, 0, 0, 0, 0, 0,
 		&pSIDAdmin)) {
-		fprintf(stderr, "AllocateAndInitializeSid (Admin): Error %u\n", GetLastError());
+		perr("AllocateAndInitializeSid (Admin): Error %u\n", GetLastError());
 		goto Cleanup;
 	}
 
@@ -264,7 +275,7 @@ static BOOL TakeOwnership(const char* filename)
 	ea[1].Trustee.ptstrName = (LPTSTR)pSIDAdmin;
 
 	if (SetEntriesInAcl(2, ea, NULL, &pACL) != ERROR_SUCCESS) {
-		fprintf(stderr, "Failed SetEntriesInAcl\n");
+		perr("Failed SetEntriesInAcl\n");
 		goto Cleanup;
 	}
 
@@ -294,13 +305,13 @@ static BOOL TakeOwnership(const char* filename)
 
 	// Open a handle to the access token for the calling process.
 	if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES, &hToken)) {
-		fprintf(stderr, "OpenProcessToken failed: Error %u\n", GetLastError());
+		perr("OpenProcessToken failed: Error %u\n", GetLastError());
 		goto Cleanup;
 	}
 
 	// Enable the SE_TAKE_OWNERSHIP_NAME privilege.
 	if (!SetPrivilege(hToken, "SeTakeOwnershipPrivilege", TRUE)) {
-		fprintf(stderr, "You must be logged on as Administrator.\n");
+		perr("You must be logged on as Administrator.\n");
 		goto Cleanup;
 	}
 
@@ -315,13 +326,13 @@ static BOOL TakeOwnership(const char* filename)
 		NULL);
 
 	if (dwRes != ERROR_SUCCESS) {
-		fprintf(stderr, "Could not set owner: Error %u\n", dwRes);
+		perr("Could not set owner: Error %u\n", dwRes);
 		goto Cleanup;
 	}
 
 	// Disable the SE_TAKE_OWNERSHIP_NAME privilege.
 	if (!SetPrivilege(hToken, "SeTakeOwnershipPrivilege", FALSE)) {
-		fprintf(stderr, "SetPrivilege call failed unexpectedly.\n");
+		perr("SetPrivilege call failed unexpectedly.\n");
 		goto Cleanup;
 	}
 
@@ -337,7 +348,7 @@ static BOOL TakeOwnership(const char* filename)
 	if (dwRes == ERROR_SUCCESS)
 		bRetval = TRUE;
 	else
-		fprintf(stderr, "Second SetNamedSecurityInfo call failed: Error %u\n", dwRes);
+		perr("Second SetNamedSecurityInfo call failed: Error %u\n", dwRes);
 
 Cleanup:
 	if (pSIDAdmin)
@@ -369,10 +380,10 @@ BOOL CreateBackup(const char* filename, BOOL use_backup)
 	strcat_s(backup_path, size, ".bak");
 	if (_stat64U(backup_path, &st) == 0) {
 		if (use_backup) {
-			fprintf(stdout, "Using backup copy of '%s' for patching\n", backup_path);
+			spout("Using backup copy of '%s' as source\n", backup_path);
 			bRet = CopyFileU(backup_path, filename, FALSE);
 		} else {
-			fprintf(stdout, "Backup '%s' already exists - keeping it\n", backup_path);
+			spout("Backup '%s' already exists - keeping it\n", backup_path);
 			bRet = TRUE;
 		}
 		free(backup_path);
@@ -380,7 +391,7 @@ BOOL CreateBackup(const char* filename, BOOL use_backup)
 	}
 	bRet = CopyFileU(filename, backup_path, TRUE);
 	if (bRet)
-		fprintf(stdout, "Saved backup as '%s'\n", backup_path);
+		spout("Saved backup as '%s'\n", backup_path);
 	free(backup_path);
 	return bRet;
 }
@@ -393,7 +404,7 @@ static DWORD RemoveDigitalSignature(const char* filename)
 	hFile = CreateFileU(filename, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
 		NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
 	if (hFile == NULL) {
-		fprintf(stderr, "Could not open file to remove digital signature: Error %u\n", GetLastError());
+		perr("Could not open file to remove digital signature: Error %u\n", GetLastError());
 		return -1;
 	}
 
@@ -403,12 +414,12 @@ static DWORD RemoveDigitalSignature(const char* filename)
 			break;
 		case 1:
 			if (!ImageRemoveCertificate(hFile, 0)) {
-				fprintf(stderr, "Could not delete digital signatures: Error %u\n", GetLastError());
+				perr("Could not delete digital signatures: Error %u\n", GetLastError());
 				dwNumCerts = -1;
 			}
 			break;
 		default:
-			fprintf(stderr, "Unexpected number of signatures!\n");
+			perr("Unexpected number of signatures!\n");
 			dwNumCerts = -1;
 			break;
 		}
@@ -429,28 +440,28 @@ static BOOL UpdateChecksum(const char* filename, DWORD* dwCheckSum)
 	hFile = CreateFileU(filename, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
 		NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
 	if (hFile == NULL) {
-		fprintf(stderr, "Could not open file to update checksum: %u\n", GetLastError());
+		perr("Could not open file to update checksum: %u\n", GetLastError());
 		return FALSE;
 	}
 
 	hFileMapping = CreateFileMapping(hFile, NULL, PAGE_READWRITE, 0, 0, NULL);
 	if (hFileMapping == NULL) {
-		fprintf(stderr, "Could not create file mapping to update checksum: Error %u\n", GetLastError());
+		perr("Could not create file mapping to update checksum: Error %u\n", GetLastError());
 		goto out;
 	}
 
 	pImageDOSHeader = (PIMAGE_DOS_HEADER)MapViewOfFile(hFileMapping, FILE_MAP_ALL_ACCESS, 0, 0, 0);
 	if (pImageDOSHeader == NULL) {
-		fprintf(stderr, "Could not get mapped view address to update checksum: Error %u\n", GetLastError());
+		perr("Could not get mapped view address to update checksum: Error %u\n", GetLastError());
 		goto out;
 	}
 	if (pImageDOSHeader->e_magic != IMAGE_DOS_SIGNATURE) {
-		fprintf(stderr, "DOS header not found\n");
+		perr("DOS header not found\n");
 		goto out;
 	}
 	pImageNTHeader32 = (PIMAGE_NT_HEADERS32)((uintptr_t)pImageDOSHeader + pImageDOSHeader->e_lfanew);
 	if (pImageNTHeader32->Signature != IMAGE_NT_SIGNATURE) {
-		fprintf(stderr, "NT header not found\n");
+		perr("NT header not found\n");
 		goto out;
 	}
 
@@ -459,21 +470,22 @@ static BOOL UpdateChecksum(const char* filename, DWORD* dwCheckSum)
 	case IMAGE_FILE_MACHINE_ALPHA64:
 	case IMAGE_FILE_MACHINE_AMD64:
 	case IMAGE_FILE_MACHINE_ARM64:
+	case IMAGE_FILE_MACHINE_RISCV64:
 		pImageNTHeader64 = (PIMAGE_NT_HEADERS64)pImageNTHeader32;
 		if (pImageNTHeader64->OptionalHeader.CheckSum != dwCheckSum[0]) {
-			fprintf(stderr, "Old checksum does not match! Is this a 64-bit executable?");
+			perr("Old checksum does not match! Is this a 64-bit executable?");
 			goto out;
 		}
 		pImageNTHeader64->OptionalHeader.CheckSum = dwCheckSum[1];
-		fprintf(stdout, "64-bit checksum updated\n");
+		vpout("64-bit checksum updated\n");
 		break;
 	default:
 		if (pImageNTHeader32->OptionalHeader.CheckSum != dwCheckSum[0]) {
-			fprintf(stderr, "Old checksum does not match! Is this a 32-bit executable?");
+			perr("Old checksum does not match! Is this a 32-bit executable?");
 			goto out;
 		}
 		pImageNTHeader32->OptionalHeader.CheckSum = dwCheckSum[1];
-		fprintf(stdout, "32-bit checksum updated\n");
+		vpout("32-bit checksum updated\n");
 		break;
 	}
 	bRet = TRUE;
@@ -512,7 +524,7 @@ static uint8_t* HexStringToBin(const char* str)
 		val <<= 4;
 		c = (char)tolower(str[i]);
 		if (c < '0' || (c > '9' && c < 'a') || c > 'f') {
-			fprintf(stderr, "Invalid hex character '%c' in string '%s'\n", str[i], str);
+			perr("Invalid hex character '%c' in string '%s'\n", str[i], str);
 			return NULL;
 		}
 		val |= ((c - '0') < 0xa) ? (c - '0') : (c - 'a' + 0xa);
@@ -523,25 +535,36 @@ static uint8_t* HexStringToBin(const char* str)
 	return ret;
 }
 
+static SplitHexString(const char* fmt1, const char* fmt2, char* hex_value)
+{
+	char c;
+	size_t j;
+
+	for (j = 0; j < strlen(hex_value); j += HEX_SPLIT) {
+		c = 0;
+		if (strlen(&hex_value[j]) > HEX_SPLIT) {
+			c = (&hex_value[j])[HEX_SPLIT];
+			(&hex_value[j])[HEX_SPLIT] = 0;
+		}
+		spout(((j == 0) || (fmt2 == NULL)) ? fmt1 : fmt2, &hex_value[j]);
+		if (c != 0)
+			(&hex_value[j])[HEX_SPLIT] = c;
+	}
+}
+
 static int main_utf8(int argc, char** argv)
 {
 	FILE* file = NULL;
 	DWORD r, dwCheckSum[2];
-	int i, patched = 0;
+	int i , patched = 0;
 	uint64_t pos;
 	uint8_t val[MAX_CHUNK_SIZE];
 	chunk* chunk_list;
-	char system_dir[128], short_arg[32] = { 0 }, *filename = NULL, *hex_value[MAX_HEX_VALUES] = { 0 };
+	char system_dir[128], short_arg[32] = { 0 }, *filename = NULL;
+	char format[64], *hex_value[MAX_HEX_VALUES] = { 0 };
 	size_t chunk_list_size, min_chunk_size = MAX_CHUNK_SIZE, max_chunk_size = 0;
 	size_t val_size, short_arg_size = 0, hex_value_size = 0;
-	bool help, skip_patch, overwrite_source, warn_on_multiple, use_backup;
-
-	fprintf(stdout, "%s %s © 2020 Pete Batard <pete@akeo.ie>\n\n", appname(argv[0]), APP_VERSION_STR);
-
-	if (!IsCurrentProcessElevated()) {
-		fprintf(stderr, "This command must be run from an elevated prompt.\n");
-		return -1;
-	}
+	bool help, ignore_patch, overwrite_source, warn_on_multiple, use_backup;
 
 	// Parse options
 	for (i = 1; i < argc; i++) {
@@ -552,81 +575,91 @@ static int main_utf8(int argc, char** argv)
 		else
 			hex_value[hex_value_size++] = argv[i];
 		if ((short_arg_size >= sizeof(short_arg) - 1) || (hex_value_size >= ARRAYSIZE(hex_value))) {
-			fprintf(stderr, "Too many arguments.\n");
+			perr("Too many arguments.\n");
 			return -1;
 		}
 	}
 
-	help = (strchr(short_arg, 'h') != NULL) || (strchr(short_arg, '?') != NULL);
 	use_backup = (strchr(short_arg, 'b') == NULL);
+	help = (strchr(short_arg, 'h') != NULL) || (strchr(short_arg, '?') != NULL);
+	ignore_patch = (strchr(short_arg, 'i') != NULL);
 	overwrite_source = (strchr(short_arg, 'o') != NULL);
+	silent = (strchr(short_arg, 's') != NULL);
+	verbose = (strchr(short_arg, 'v') != NULL);
+	warn_on_multiple = (strchr(short_arg, 'w') == NULL);
 	if (overwrite_source && !use_backup) {
-		fprintf(stderr, "Option -o cannot be used with option -b\n");
+		perr("Option -o cannot be used with option -b\n");
 		return -1;
 	}
-	skip_patch = (strchr(short_arg, 's') != NULL);
-	warn_on_multiple = (strchr(short_arg, 'w') == NULL);
 
-	if ((!skip_patch && (hex_value_size < 2)) || help) {
-		fprintf(stdout, "DESCRIPTION\n  Take ownership, patch, update checksum and update digital\n");
-		fprintf(stdout, "  signature (self-sign) of a PE executable.\n\n");
-		fprintf(stdout, "USAGE\n  %s [-bhosw] FILE [HEXVAL HEXVAL [HEXVAL HEXVAL [...]]\n\n", appname(argv[0]));
-		fprintf(stdout, "  Where HEXVALs are paired values containing the hexadecimal data to\n");
-		fprintf(stdout, "  search for, followed by the data you want to replace it with.\n\n");
-		fprintf(stdout, "  HEXVAL can be of any size between %d and %d bytes. You can mix and\n",
+	spout("%s %s © 2020 Pete Batard <pete@akeo.ie>\n\n", appname(argv[0]), APP_VERSION_STR);
+	if ((!ignore_patch && (hex_value_size < 2)) || help) {
+		pout("DESCRIPTION\n  Take ownership, patch, update checksum and update digital\n");
+		pout("  signature (self-sign) of a PE executable.\n\n");
+		pout("USAGE\n  %s [-bhiosvw] FILE [HEXVAL HEXVAL [HEXVAL HEXVAL [...]]\n\n", appname(argv[0]));
+		pout("  Where HEXVALs are paired values containing the hexadecimal data to\n");
+		pout("  search for, followed by the data you want to replace it with.\n\n");
+		pout("  HEXVAL can be of any size between %d and %d bytes. You can mix and\n",
 			MIN_CHUNK_SIZE, MAX_CHUNK_SIZE);
-		fprintf(stdout, "  match sizes, as long the value sizes in each pair are the same.\n\n");
-		fprintf(stdout, "  No specific alignment is required for the HEXVALs, meaning that\n");
-		fprintf(stdout, "  %s can match a word value starting at an odd address.\n\n",
+		pout("  match sizes, as long the value sizes in each pair are the same.\n\n");
+		pout("  No specific alignment is required for the HEXVALs, meaning that\n");
+		pout("  %s can match a word value starting at an odd address.\n\n",
 			appname(argv[0]));
-		fprintf(stdout, "  Values should be provided in big-endian mode i.e. in the same byte\n");
-		fprintf(stdout, "  order as the one they appear with in the hex-dump of the file.\n\n");
-		fprintf(stdout, "  Unless you use option -w, %s will warn (once) if multiple\n",
+		pout("  Values should be provided in big-endian mode i.e. in the same byte\n");
+		pout("  order as the one they appear with in the hex-dump of the file.\n\n");
+		pout("  Unless you use option -w, %s will warn (once) if multiple\n",
 			appname(argv[0]));
-		fprintf(stdout, "  instances of a specific HEXVAL pair are patched.\n\n");
-		fprintf(stdout, "OPTIONS\n  -h: This help text.\n");
-		fprintf(stdout, "  -b: DON'T create a backup before patching the file (DANGEROUS).\n");
-		fprintf(stdout, "  -o: Overwrite the source with the backup (if any) before patching.\n");
-		fprintf(stdout, "  -s: Update the digital signature only (Don't patch).\n");
-		fprintf(stdout, "  -w: Don't warn when multiple instances of a patch are applied.\n");
+		pout("  instances of a specific HEXVAL pair are patched.\n\n");
+		pout("OPTIONS\n  -h: This help text.\n");
+		pout("  -b: DON'T create a backup before patching the file (DANGEROUS).\n");
+		pout("  -i: Ignore patch values. Update the digital signature only.\n");
+		pout("  -o: Overwrite the source with the backup (if any) before patching.\n");
+		pout("  -s: Silent mode. No output except for errors.\n");
+		pout("  -v: Slightly more verbose output.\n");
+		pout("  -w: Don't warn when multiple instances of a patch are applied.\n");
 		return -2;
 	}
 
-	fprintf(stdout, "This program is free software; you can redistribute it and/or modify it under \n");
-	fprintf(stdout, "the terms of the GNU General Public License as published by the Free Software \n");
-	fprintf(stdout, "Foundation; either version 3 of the License or any later version.\n\n");
-	fprintf(stdout, "Official project and latest downloads at: https://github.com/pbatard/winpatch.\n\n");
+	spout("This program is free software; you can redistribute it and/or modify it under \n");
+	spout("the terms of the GNU General Public License as published by the Free Software \n");
+	spout("Foundation; either version 3 of the License or any later version.\n\n");
+	spout("Official project and latest downloads: https://github.com/pbatard/winpatch.\n\n");
+
+	if (!IsCurrentProcessElevated()) {
+		perr("This command must be run from an elevated prompt.\n");
+		return -1;
+	}
 
 	if (GetSystemDirectoryU(system_dir, sizeof(system_dir)) == 0)
 		static_strcpy(system_dir, "C:\\Windows\\System32");
 	if (_strnicmp(filename, system_dir, strlen(system_dir)) == 0) {
-		fprintf(stderr, "Patching of active system files is prohibited!\n");
+		perr("Patching of active system files is prohibited!\n");
 		return -1;
 	}
 
 	// Sanity checks
 	if (!PathFileExistsU(filename)) {
-		fprintf(stderr, "File '%s' doesn't exist\n", filename);
+		perr("File '%s' doesn't exist\n", filename);
 		return -1;
 	}
 
 	if (!TakeOwnership(filename)) {
-		fprintf(stderr, "Could not take ownership of %s\n", filename);
+		perr("Could not take ownership of '%s'\n", filename);
 		return -1;
 	}
 
 	if (use_backup) {
 		if (!CreateBackup(filename, overwrite_source)) {
-			fprintf(stderr, "Could not create backup of %s\n", filename);
+			perr("Could not create backup of '%s'\n", filename);
 			return -1;
 		}
 	}
 
-	if (skip_patch)
+	if (ignore_patch)
 		goto skip_patch;
 
 	if (hex_value_size % 2) {
-		fprintf(stderr, "Values must be provided in [<SEARCH> <REPLACE>] pairs\n");
+		perr("Values must be provided in [<SEARCH> <REPLACE>] pairs\n");
 		return -1;
 	}
 
@@ -634,27 +667,27 @@ static int main_utf8(int argc, char** argv)
 	chunk_list_size = hex_value_size / 2;
 	chunk_list = calloc(chunk_list_size, sizeof(chunk));
 	if (chunk_list == NULL) {
-		fprintf(stderr, "calloc error\n");
+		perr("Memory allocation error\n");
 		return -1;
 	}
 
 	for (i = 0; i < (int)chunk_list_size; i++) {
 		chunk_list[i].size = strlen(hex_value[2 * i]);
 		if (chunk_list[i].size % 2) {
-			fprintf(stderr, "The number of hex digits for %s must be a multiple of 2\n",
+			perr("The number of hex digits for '%s' must be a multiple of 2\n",
 				hex_value[2 * i]);
 			FreeChunkList(chunk_list, chunk_list_size);
 			return -1;
 		}
 		if (chunk_list[i].size != strlen(hex_value[2 * i + 1])) {
-			fprintf(stderr, "'%s' and '%s' are not the same length\n",
+			perr("'%s' and '%s' are not the same length\n",
 				hex_value[2 * i], hex_value[2 * i + 1]);
 			FreeChunkList(chunk_list, chunk_list_size);
 			return -1;
 		}
 		chunk_list[i].size /= 2;
 		if ((chunk_list[i].size < MIN_CHUNK_SIZE) || (chunk_list[i].size > MAX_CHUNK_SIZE)) {
-			fprintf(stderr, "A value can not be smaller than %d bytes or larger than %d bytes\n",
+			perr("A value can not be smaller than %d bytes or larger than %d bytes\n",
 				MIN_CHUNK_SIZE, MAX_CHUNK_SIZE);
 			FreeChunkList(chunk_list, chunk_list_size);
 			return -1;
@@ -664,7 +697,7 @@ static int main_utf8(int argc, char** argv)
 		chunk_list[i].org = HexStringToBin(hex_value[2 * i]);
 		chunk_list[i].new = HexStringToBin(hex_value[2 * i + 1]);
 		if (chunk_list[i].org == NULL || chunk_list[i].new == NULL) {
-			fprintf(stderr, "Could not convert hex string\n");
+			perr("Could not convert hex string\n");
 			FreeChunkList(chunk_list, chunk_list_size);
 			return -1;
 		}
@@ -673,18 +706,19 @@ static int main_utf8(int argc, char** argv)
 	// Patch target file
 	file = fopenU(filename, "rb+");
 	if (file == NULL) {
-		fprintf(stderr, "Could not open '%s'\n", filename);
+		perr("Could not open '%s'\n", filename);
 		return -1;
 	}
 
 	val_size = min_chunk_size - 1;
 	if (fread(val, 1, val_size, file) != val_size) {
-		fprintf(stderr, "Could not read '%s'\n", filename);
+		perr("Could not read '%s'\n", filename);
 		FreeChunkList(chunk_list, chunk_list_size);
 		fclose(file);
 		return -1;
 	}
 
+	spout("Patching data...\n");
 	for (pos = 0; ; pos++) {
 		assert(val_size < max_chunk_size);
 		if (fread(&val[val_size++], 1, 1, file) != 1)
@@ -695,16 +729,16 @@ static int main_utf8(int argc, char** argv)
 		for (i = 0; i < (int)chunk_list_size; i++) {
 			if ((chunk_list[i].size <= val_size) && (memcmp(chunk_list[i].org, val, chunk_list[i].size) == 0)) {
 				if ((chunk_list[i].patched++ == 1) && warn_on_multiple) {
-					fprintf(stderr, "WARNING: More than one section with data %s is being patched!\n", hex_value[2 * i]);
+					perr("WARNING: More than one section with data %s is being patched!\n", hex_value[2 * i]);
 				}
-				fprintf(stdout, "%08llX: %s\n========> %s ", pos, hex_value[2 * i], hex_value[2 * i + 1]);
-				fflush(stdout);
+				static_sprintf(format, "%08llX - %%s\n", pos);
+				SplitHexString(format, "         - %s\n", hex_value[2 * i]);
 				memcpy(val, chunk_list[i].new, chunk_list[i].size);
 				fseek(file, (long)pos, SEEK_SET);
 				if (fwrite(&val, 1, chunk_list[i].size, file) != chunk_list[i].size) {
-					fprintf(stdout, "[FAILED!]\n");
+					SplitHexString("         = %s [FAILED!]\n", "         = %s\n", hex_value[2 * i]);
 				} else {
-					fprintf(stdout, "[SUCCESS]\n");
+					SplitHexString("         + %s\n", NULL, hex_value[2 * i + 1]);
 					patched++;
 				}
 				fflush(file);
@@ -723,44 +757,46 @@ static int main_utf8(int argc, char** argv)
 	FreeChunkList(chunk_list, chunk_list_size);
 	fclose(file);
 	if (patched == 0) {
-		fprintf(stdout, "No elements were patched - aborting\n");
+		spout("No elements were patched - aborting\n");
 		return 0;
 	}
 
 	// Update checksum and digital signature
 skip_patch:
+	spout("Removing existing digital signature...\n");
 	r = RemoveDigitalSignature(filename);
 	switch (r) {
 	case 0:
-		fprintf(stdout, "No digital signature to remove\n");
+		spout("WARNING: No digital signature to remove.\n");
 		break;
 	case 1:
-		fprintf(stdout, "Removed digital signature\n");
 		break;
 	default:
-		fprintf(stderr, "Could not remove digital signature\n");
+		perr("Could not remove digital signature\n");
 		return -1;
 	}
 
+	spout("Computing PE checksum...\n");
 	r = MapFileAndCheckSumU(filename, &dwCheckSum[0], &dwCheckSum[1]);
 	if (r != CHECKSUM_SUCCESS) {
-		fprintf(stderr, "Could not compute checksum: %u\n", r);
+		perr("Could not compute checksum: Error %u\n", r);
 		return -1;
 	}
+	vpout("New checksum: %08X\n", dwCheckSum[1]);
 
-	fprintf(stdout, "PE Checksum: %08X\n", dwCheckSum[1]);
+	spout("Updating PE checksum...\n");
 	if (dwCheckSum[0] != dwCheckSum[1] && !UpdateChecksum(filename, dwCheckSum)) {
-		fprintf(stderr, "Could not update checksum\n");
+		perr("Could not update checksum\n");
 		return -1;
 	}
 
-	fprintf(stdout, "Applying digital signature...\n");
+	spout("Applying self-signed digital signature...\n");
 	if (!SelfSignFile(filename, "CN = Test Signing Certificate")) {
-		fprintf(stderr, "Could not sign file\n");
+		perr("Could not sign file\n");
 		return -1;
 	}
 
-	fprintf(stdout, "Successfully patched %d data item%s from '%s'\n",
+	spout("Successfully patched %d section%s in '%s'\n",
 		patched, (patched > 1) ? "s" : "", filename);
 
 	return patched;

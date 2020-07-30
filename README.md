@@ -29,7 +29,7 @@ Usage
 -----
 
 ```
-winpatch [-bhosw] FILE [HEXVAL HEXVAL [HEXVAL HEXVAL [...]]
+winpatch [-bhiosvw] FILE [HEXVAL HEXVAL [HEXVAL HEXVAL [...]]
 ```
 
 Where `HEXVAL`s are paired values containing the hexadecimal data to search for,
@@ -52,8 +52,10 @@ Options
 
 * `-h`: Show help
 * `-b`: __DON'T__ create a backup before patching the file (DANGEROUS).
+* `-i`: Ignore patch values. Update the digital signature only.
 * `-o`: Overwrite the source with the backup (if any) before patching.
-* `-s`: Update the digital signature only (Don't patch).
+* `-s`: Silent mode. No output except for errors.
+* `-v`: Slightly more verbose output.
 * `-w`: Don't warn when multiple instances of a patch are applied.
 
 Example
