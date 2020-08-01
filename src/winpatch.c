@@ -58,7 +58,7 @@
 #define APP_VERSION_STR             STRINGIFY(APP_VERSION)
 #endif
 
-#define pout(fmt, ...) do {fprintf(stdout, fmt, __VA_ARGS__); fflush(stdout);} while(0)
+#define pout(fmt, ...) do {fprintf(stdout, fmt, __VA_ARGS__);} while(0)
 #define spout(fmt, ...) do {if (!silent) pout(fmt, __VA_ARGS__);} while(0)
 #define vpout(fmt, ...) do {if (verbose) pout(fmt, __VA_ARGS__);} while(0)
 #define perr(fmt, ...) fprintf(stderr, fmt, __VA_ARGS__)
