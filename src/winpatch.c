@@ -592,7 +592,7 @@ static int main_utf8(int argc, char** argv)
 		return -1;
 	}
 
-	spout("%s %s © 2020 Pete Batard <pete@akeo.ie>\n\n", appname(argv[0]), APP_VERSION_STR);
+	spout("\n%s %s © 2020 Pete Batard <pete@akeo.ie>\n\n", appname(argv[0]), APP_VERSION_STR);
 	if ((!ignore_patch && (hex_value_size < 2)) || help) {
 		pout("DESCRIPTION\n  Take ownership, patch, update checksum and update digital\n");
 		pout("  signature (self-sign) of a PE executable.\n\n");
@@ -731,10 +731,10 @@ static int main_utf8(int argc, char** argv)
 				if ((chunk_list[i].patched++ == 1) && warn_on_multiple) {
 					perr("WARNING: More than one section with data %s is being patched!\n", hex_value[2 * i]);
 				}
-				static_sprintf(format, "%08llX - %%s\n", pos);
+				static_sprintf(format, "%08llX - %%s\n", pos - val_size + chunk_list[i].size);
 				SplitHexString(format, "         - %s\n", hex_value[2 * i]);
 				memcpy(val, chunk_list[i].new, chunk_list[i].size);
-				fseek(file, (long)pos, SEEK_SET);
+				fseek(file, (long)(pos - val_size + chunk_list[i].size), SEEK_SET);
 				if (fwrite(&val, 1, chunk_list[i].size, file) != chunk_list[i].size) {
 					SplitHexString("         = %s [FAILED!]\n", "         = %s\n", hex_value[2 * i]);
 				} else {
@@ -804,6 +804,8 @@ skip_patch:
 
 int wmain(int argc, wchar_t** argv16)
 {
+	fflush(stdin);
+	fflush(stdout);
 	SetConsoleOutputCP(CP_UTF8);
 	char** argv = calloc(argc, sizeof(char*));
 	if (argv == NULL)

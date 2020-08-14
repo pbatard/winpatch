@@ -9,11 +9,11 @@
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <LocalDebuggerCommandArguments>-o C:\tmp\USBXHCI.SYS EA000037E8630091 EA000036E8630091 0A010037E8430091 0A010036E8430091</LocalDebuggerCommandArguments>
+    <LocalDebuggerCommandArguments>-o C:\tmp\USBXHCI.SYS 0037e8430091e1 0036e8430091e1 ea000037e8630091 ea000036e8630091</LocalDebuggerCommandArguments>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <LocalDebuggerCommandArguments>-o C:\tmp\USBXHCI.SYS EA000037E8630091 EA000036E8630091 0A010037E8430091 0A010036E8430091</LocalDebuggerCommandArguments>
+    <LocalDebuggerCommandArguments>-o C:\tmp\USBXHCI.SYS 0037e8430091e1 0036e8430091e1 ea000037e8630091 ea000036e8630091</LocalDebuggerCommandArguments>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
   </PropertyGroup>
 </Project>

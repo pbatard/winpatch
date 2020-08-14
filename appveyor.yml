@@ -13,6 +13,7 @@ after_build:
   ps: |-
       # Make sure you use quotes around variables below!
       7z a "$env:APPVEYOR_PROJECT_NAME.zip" ".\x86\Release\*.exe" LICENSE.txt
+      Get-FileHash ".\x86\Release\*.exe" | Format-List
       Get-FileHash "$env:APPVEYOR_PROJECT_NAME.zip" -Algorithm SHA256 | Format-List
 
 artifacts:
